@@ -1,0 +1,1 @@
+"""Maple Inven monitoring package."""
