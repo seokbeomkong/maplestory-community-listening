@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 from typing import Final
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, parse_qsl, urlsplit
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup, Tag
@@ -106,8 +106,23 @@ def _article_identity(raw_href: object, expected_board: int) -> tuple[int, str]:
         port = parsed.port
     except (UnicodeError, ValueError):
         raise InvalidSourcePage("article URL is invalid") from None
-    if "?" in raw_href or "#" in raw_href:
+    if "#" in raw_href:
         raise InvalidSourcePage("article URL is invalid")
+    if "?" in raw_href:
+        try:
+            query = parse_qsl(
+                parsed.query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                encoding="utf-8",
+                errors="strict",
+                max_num_fields=1,
+                separator="&",
+            )
+        except (UnicodeError, ValueError):
+            raise InvalidSourcePage("article URL is invalid") from None
+        if query != [("category", SUPPORTED_CATEGORY)]:
+            raise InvalidSourcePage("article URL is invalid")
     if parsed.scheme or parsed.netloc:
         if (
             parsed.scheme != "https"

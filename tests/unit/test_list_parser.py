@@ -173,8 +173,30 @@ def test_rejects_noncanonical_or_spoofed_article_hrefs(href: str) -> None:
 @pytest.mark.parametrize(
     "href",
     [
+        "/board/maple/2294/900010?category=히어로",
+        "/board/maple/2294/900010?category=%ED%9E%88%EC%96%B4%EB%A1%9C",
+        "https://www.inven.co.kr/board/maple/2294/900010?category=히어로",
+    ],
+)
+def test_accepts_only_the_hero_source_filter_and_canonicalizes_it(href: str) -> None:
+    item = parse_list_page(
+        2294,
+        _page(rows=(_article_row(href=href),)),
+        FETCHED_AT,
+    )[0]
+
+    assert item.post_id == 900010
+    assert item.source_url == "https://www.inven.co.kr/board/maple/2294/900010"
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
         "/board/maple/2294/900010?token=relative-query-do-not-leak",
         ("https://www.inven.co.kr/board/maple/2294/900010?token=absolute-query-do-not-leak"),
+        "/board/maple/2294/900010?category=히어로&token=extra-do-not-leak",
+        "/board/maple/2294/900010?category=팔라딘",
+        "/board/maple/2294/900010?category=히어로&category=히어로",
     ],
 )
 def test_rejects_article_hrefs_with_queries_without_echoing_them(href: str) -> None:
