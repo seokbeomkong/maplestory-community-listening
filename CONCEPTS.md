@@ -26,6 +26,8 @@ Same-configuration retries monotonically converge counters and Source Observatio
 
 A rolling-window ordering by accumulated engagement totals, distinct from a Rising Signal that measures recent change.
 
+Each operator-facing Top-N view enforces its advertised bound independently of the materialization that supplies it.
+
 ### Rising Signal
 
 A time-windowed momentum result derived from differences between Metric Snapshots, with explicit sample coverage and freshness.
