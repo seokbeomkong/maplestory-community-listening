@@ -152,7 +152,12 @@ def _ensure_release_work_item(session: Session, quarantine: SecurityQuarantine) 
     )
     session.execute(statement)
 
-    work_item = session.execute(select(WorkItem).where(WorkItem.task_key == task_key)).scalar_one()
+    work_item = session.execute(
+        select(WorkItem)
+        .where(WorkItem.task_key == task_key)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
     if (
         work_item.kind != _RELEASE_WORK_KIND
         or work_item.payload != payload
@@ -188,6 +193,7 @@ def release_quarantine(
             select(SecurityQuarantine)
             .where(SecurityQuarantine.id == quarantine_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).scalar_one_or_none()
         if quarantine is None:
             raise QuarantineNotFoundError(f"quarantine {quarantine_id} not found")

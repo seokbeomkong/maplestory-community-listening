@@ -7,10 +7,11 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from maple_monitor.models import SecurityQuarantine, WorkItem
 from maple_monitor.security.service import (
     QuarantineNotFoundError,
     QuarantineReleaseConflictError,
@@ -58,6 +59,19 @@ def _insert_quarantine(
         },
     )
     return quarantine_id
+
+
+def _cleanup_committed_release_fixture(db_engine: Engine, quarantine_id: UUID) -> None:
+    with Session(db_engine) as cleanup_session:
+        cleanup_session.execute(
+            text("DELETE FROM work_items WHERE task_key = :task_key"),
+            {"task_key": f"released-analysis:{quarantine_id}:v1"},
+        )
+        cleanup_session.execute(
+            text("DELETE FROM security_quarantine WHERE id = :id"),
+            {"id": quarantine_id},
+        )
+        cleanup_session.commit()
 
 
 def test_benign_content_creates_neither_quarantine_nor_work_item(
@@ -291,6 +305,127 @@ def test_release_retry_cannot_rewrite_existing_review_history(db_session: Sessio
         ).scalar_one()
         == 1
     )
+
+
+def test_release_refreshes_a_preloaded_quarantine_before_applying_the_lock(
+    db_engine: Engine,
+) -> None:
+    source_ref = "post:2294:stale-quarantine-identity"
+    with Session(db_engine) as setup_session:
+        quarantine_id = _insert_quarantine(setup_session, source_ref=source_ref)
+        setup_session.commit()
+
+    try:
+        with Session(db_engine) as stale_session, Session(db_engine) as releasing_session:
+            stale_quarantine = stale_session.get(SecurityQuarantine, quarantine_id)
+            assert stale_quarantine is not None
+            assert stale_quarantine.review_state == "pending"
+
+            release_quarantine(
+                releasing_session,
+                quarantine_id=quarantine_id,
+                reviewer="current-reviewer",
+                note="Current immutable review.",
+            )
+            releasing_session.commit()
+
+            with pytest.raises(QuarantineReviewConflictError, match="already reviewed"):
+                release_quarantine(
+                    stale_session,
+                    quarantine_id=quarantine_id,
+                    reviewer="stale-reviewer",
+                    note="Must not overwrite the committed review.",
+                )
+
+        with Session(db_engine) as verification_session:
+            audit = verification_session.execute(
+                text(
+                    "SELECT review_state, reviewer, note, released_at "
+                    "FROM security_quarantine WHERE id = :id"
+                ),
+                {"id": quarantine_id},
+            ).one()
+            assert audit.review_state == "released"
+            assert audit.reviewer == "current-reviewer"
+            assert audit.note == "Current immutable review."
+            assert audit.released_at is not None
+    finally:
+        _cleanup_committed_release_fixture(db_engine, quarantine_id)
+
+
+def test_release_refreshes_preloaded_work_item_ownership_before_accepting_it(
+    db_engine: Engine,
+) -> None:
+    source_ref = "post:2294:stale-work-identity"
+    with Session(db_engine) as setup_session:
+        quarantine_id = _insert_quarantine(setup_session, source_ref=source_ref)
+        task_key = f"released-analysis:{quarantine_id}:v1"
+        expected_payload = {
+            "quarantine_id": str(quarantine_id),
+            "source_kind": "comment",
+            "source_ref": source_ref,
+        }
+        expected_payload_hash = hashlib.sha256(
+            json.dumps(expected_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        setup_session.execute(
+            text(
+                "INSERT INTO work_items "
+                "(task_key, kind, state, payload, payload_hash, available_at) VALUES "
+                "(:task_key, 'released_analysis', 'pending', "
+                "CAST(:payload AS jsonb), :payload_hash, now())"
+            ),
+            {
+                "task_key": task_key,
+                "payload": json.dumps(expected_payload),
+                "payload_hash": expected_payload_hash,
+            },
+        )
+        setup_session.commit()
+
+    try:
+        with Session(db_engine) as stale_session, Session(db_engine) as changing_session:
+            stale_work_item = stale_session.execute(
+                select(WorkItem).where(WorkItem.task_key == task_key)
+            ).scalar_one()
+            assert stale_work_item.kind == "released_analysis"
+            assert stale_work_item.payload == expected_payload
+
+            changing_session.execute(
+                text(
+                    "UPDATE work_items SET kind = 'unrelated_work', payload = '{}'::jsonb, "
+                    "payload_hash = NULL WHERE task_key = :task_key"
+                ),
+                {"task_key": task_key},
+            )
+            changing_session.commit()
+
+            with pytest.raises(QuarantineReleaseConflictError, match="different work"):
+                release_quarantine(
+                    stale_session,
+                    quarantine_id=quarantine_id,
+                    reviewer="reviewer",
+                    note="Must reject stale work ownership.",
+                )
+
+        with Session(db_engine) as verification_session:
+            audit = verification_session.execute(
+                text(
+                    "SELECT review_state, reviewer, note, released_at "
+                    "FROM security_quarantine WHERE id = :id"
+                ),
+                {"id": quarantine_id},
+            ).one()
+            assert audit == ("pending", None, None, None)
+            work_item = verification_session.execute(
+                text(
+                    "SELECT kind, payload, payload_hash FROM work_items WHERE task_key = :task_key"
+                ),
+                {"task_key": task_key},
+            ).one()
+            assert work_item == ("unrelated_work", {}, None)
+    finally:
+        _cleanup_committed_release_fixture(db_engine, quarantine_id)
 
 
 def test_release_is_caller_transactional_and_can_be_rolled_back(db_session: Session) -> None:

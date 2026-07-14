@@ -39,10 +39,12 @@ class ScanResult:
 
 
 _INSTRUCTION_OVERRIDE = re.compile(
-    r"(?:\b(?:ignore|disregard|forget|override)\s+(?:all\s+)?"
-    r"(?:previous|prior|above|earlier|system)\s+(?:instructions?|prompts?|commands?)\b)"
-    r"|(?:(?:앞선|이전|위의|기존)\s*(?:명령|지시|프롬프트)(?:을|를)?"
-    r"[\s\S]{0,24}?(?:무시|따르지|재정의|덮어쓰))",
+    r"(?:\b(?:ignore|disregard|forget|override)\b[^,.;:!?-]{0,50}?"
+    r"\b(?:previous|prior|above|earlier|system)\b[^,.;:!?-]{0,30}?"
+    r"\b(?:instructions?|prompts?|commands?)\b)"
+    r"|(?:(?<!\w)(?:앞선|이전|위의|기존)(?!\w)[^,.;:!?-]{0,30}?"
+    r"(?<!\w)(?:명령|지시|프롬프트)(?:을|를)?(?!\w)[^,.;:!?-]{0,20}?"
+    r"(?<!\w)(?:무시(?!무시)|따르지|재정의|덮어쓰))",
     re.IGNORECASE,
 )
 
@@ -116,17 +118,25 @@ def _evidence(value: str) -> tuple[str, str]:
     return digest, html.escape(control_safe, quote=True)
 
 
-def _detection_text(normalized_text: str) -> str:
-    characters: list[str] = []
+def _detection_variants(normalized_text: str) -> tuple[str, ...]:
+    separated_characters: list[str] = []
+    collapsed_characters: list[str] = []
     for character in normalized_text:
         category = unicodedata.category(character)
         if category == "Cf":
+            separated_characters.append(" ")
             continue
         if category == "Cc":
-            characters.append(" ")
+            separated_characters.append(" ")
         else:
-            characters.append(character)
-    return "".join(characters)
+            separated_characters.append(character)
+            collapsed_characters.append(character)
+
+    separated_text = "".join(separated_characters)
+    collapsed_text = "".join(collapsed_characters)
+    if collapsed_text == separated_text:
+        return (separated_text,)
+    return separated_text, collapsed_text
 
 
 def scan_untrusted(text: str, source_kind: str) -> ScanResult:
@@ -152,9 +162,16 @@ def scan_untrusted(text: str, source_kind: str) -> ScanResult:
             )
         )
 
-    searchable_text = _detection_text(normalized_text)
+    searchable_texts = _detection_variants(normalized_text)
     for rule_id, score, pattern in _RULES:
-        match = pattern.search(searchable_text)
+        match = next(
+            (
+                candidate
+                for searchable_text in searchable_texts
+                if (candidate := pattern.search(searchable_text)) is not None
+            ),
+            None,
+        )
         if match is None:
             continue
         evidence_hash, escaped_evidence = _evidence(match.group(0))
