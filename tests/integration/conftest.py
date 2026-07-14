@@ -19,7 +19,7 @@ def _require_isolated_test_database_url(value: str | None) -> None:
         pytest.fail(str(exc))
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def database_url() -> str:
     value = os.environ.get("DATABASE_URL")
     _require_isolated_test_database_url(value)

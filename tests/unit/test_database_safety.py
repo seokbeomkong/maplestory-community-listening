@@ -1,9 +1,65 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from runpy import run_path
+import subprocess
+import sys
 
 import pytest
 from sqlalchemy.engine import URL
+
+
+def test_no_fixture_alembic_test_runs_preflight_before_database_capable_call(
+    tmp_path: Path,
+) -> None:
+    assertion_bomb = "DATABASE_CAPABLE_ALEMBIC_CALL_REACHED"
+    call_sentinel = tmp_path / "alembic-check-called"
+    plugin = tmp_path / "preflight_assertion_bomb.py"
+    plugin.write_text(
+        "from pathlib import Path\n"
+        "from alembic import command\n\n"
+        "def pytest_configure(config):\n"
+        "    def assertion_bomb(*args, **kwargs):\n"
+        f"        Path({str(call_sentinel)!r}).touch()\n"
+        f"        raise AssertionError({assertion_bomb!r})\n"
+        "    command.check = assertion_bomb\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = (
+        "postgresql+psycopg://user:preflight-secret@127.0.0.1:55432/"
+        "maple_monitor_test?host=203.0.113.10"
+    )
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(tmp_path), environment.get("PYTHONPATH")) if value
+    )
+    environment.pop("PYTEST_ADDOPTS", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            plugin.stem,
+            "tests/integration/test_core_schema.py::"
+            "test_alembic_metadata_does_not_treat_runtime_partitions_as_schema_drift",
+            "-q",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    output = result.stdout + result.stderr
+
+    assert not call_sentinel.exists(), output
+    assert result.returncode == 1
+    assert "DATABASE_URL must target the isolated PostgreSQL test database" in output
+    assert assertion_bomb not in output
 
 
 @pytest.mark.parametrize(
