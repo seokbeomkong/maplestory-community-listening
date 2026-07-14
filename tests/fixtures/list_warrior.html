@@ -1,48 +1,87 @@
 <!doctype html>
 <html lang="ko">
   <body>
+    <!--
+      Structure provenance: public Hero-filtered Maple Inven board 2294 DOM,
+      captured 2026-07-14 KST. Tags/classes are preserved; post IDs, titles,
+      authors, dates, and metrics below are synthetic and contain no live values.
+    -->
     <table class="board-list">
       <thead>
         <tr>
-          <th>번호</th>
-          <th>제목</th>
-          <th>등록일</th>
-          <th>조회</th>
-          <th>추천</th>
+          <th class="num">번호</th>
+          <th class="tit">제목</th>
+          <th class="user">글쓴이</th>
+          <th class="date">등록일</th>
+          <th class="view">조회</th>
+          <th class="reco">추천</th>
         </tr>
       </thead>
       <tbody>
-        <tr class="notice">
-          <td>900003</td>
-          <td>
-            <span class="row-label">공지</span>
-            <span class="category">히어로</span>
-            <a href="/board/maple/2294/900003">전투 분석 안내</a>
+        <tr class="notice all">
+          <td class="num">공지</td>
+          <td class="tit">
+            <div class="text-wrap">
+              <div>
+                <span class="user-icon"></span>
+                <a class="subject-link" href="/board/maple/2294/900003"><span class="category">[팁/정보]</span> 합성 공지 제목</a>
+              </div>
+              <span class="con-comment">[2]</span>
+            </div>
           </td>
-          <td>2026-07-13</td>
-          <td>2,345</td>
-          <td>17</td>
+          <td class="user">합성작성자A</td>
+          <td class="date">2026-07-13</td>
+          <td class="view">2,345</td>
+          <td class="reco">17</td>
         </tr>
         <tr>
-          <td>900002</td>
-          <td>
-            <span class="category">히어로</span>
-            <a href="/board/maple/2294/900002">장비 조합 기록 [12]</a>
+          <td class="num">900002</td>
+          <td class="tit">
+            <div class="text-wrap">
+              <div>
+                <span class="user-icon"></span>
+                <a class="subject-link" href="/board/maple/2294/900002"><span class="category">[히어로]</span> 장비 조합 기록 [2147483647]</a>
+              </div>
+              <span class="con-comment">[12]</span>
+            </div>
           </td>
-          <td>06:15</td>
-          <td>1,234</td>
-          <td>9</td>
+          <td class="user">합성작성자B</td>
+          <td class="date">06:15</td>
+          <td class="view">1,234</td>
+          <td class="reco">9</td>
         </tr>
-        <tr class="ad">
-          <td>900001</td>
-          <td>
-            <span class="row-label">광고</span>
-            <span class="category">히어로</span>
-            <a href="https://www.inven.co.kr/board/maple/2294/900001?query=discarded">행사 알림</a>
+        <tr class="lgtm">
+          <td class="num">900004</td>
+          <td class="tit">
+            <div class="text-wrap">
+              <div>
+                <span class="user-icon"></span>
+                <a class="subject-link" href="/board/maple/2294/900004"><span class="category">[히어로]</span> 전투 기록 검토</a>
+              </div>
+              <span class="con-comment"></span>
+            </div>
           </td>
-          <td>07-01</td>
-          <td>88</td>
-          <td>0</td>
+          <td class="user">합성작성자C</td>
+          <td class="date">06:10</td>
+          <td class="view">321</td>
+          <td class="reco">4</td>
+        </tr>
+        <!-- Synthetic production-shaped ad coverage; no ad row appeared in the live capture. -->
+        <tr class="ad">
+          <td class="num">900001</td>
+          <td class="tit">
+            <div class="text-wrap">
+              <div>
+                <span class="user-icon"></span>
+                <a class="subject-link" href="/board/maple/2294/900001"><span class="category">[히어로]</span> 합성 행사 알림</a>
+              </div>
+              <span class="con-comment">[1]</span>
+            </div>
+          </td>
+          <td class="user">합성작성자D</td>
+          <td class="date">07-01</td>
+          <td class="view">88</td>
+          <td class="reco">0</td>
         </tr>
       </tbody>
     </table>

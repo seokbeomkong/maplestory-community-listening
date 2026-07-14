@@ -10,6 +10,10 @@ from maple_monitor.collection.types import PostListItem
 from maple_monitor.models import Board, Post, PostMetricSnapshot
 
 
+class SnapshotConfigConflict(RuntimeError):
+    """Raised when a snapshot slot is already pinned to another configuration."""
+
+
 def ensure_supported_board(session: Session) -> None:
     statement = (
         insert(Board)
@@ -98,19 +102,20 @@ def upsert_snapshot(
     item: PostListItem,
     *,
     observed_at_slot_kst: datetime,
+    observed_at_actual: datetime,
     config_version: str,
 ) -> None:
     statement = insert(PostMetricSnapshot).values(
         board_id=item.board_id,
         post_id=item.post_id,
         observed_at_slot_kst=observed_at_slot_kst,
-        observed_at_actual=func.now(),
+        observed_at_actual=observed_at_actual,
         views=item.views,
         recommendations=item.recommendations,
         comments=item.comments,
         config_version=config_version,
     )
-    session.execute(
+    persisted_post_id = session.execute(
         statement.on_conflict_do_update(
             index_elements=[
                 PostMetricSnapshot.board_id,
@@ -118,7 +123,10 @@ def upsert_snapshot(
                 PostMetricSnapshot.observed_at_slot_kst,
             ],
             set_={
-                "observed_at_actual": func.now(),
+                "observed_at_actual": func.greatest(
+                    PostMetricSnapshot.observed_at_actual,
+                    statement.excluded.observed_at_actual,
+                ),
                 "views": func.greatest(
                     PostMetricSnapshot.views,
                     statement.excluded.views,
@@ -131,10 +139,9 @@ def upsert_snapshot(
                     PostMetricSnapshot.comments,
                     statement.excluded.comments,
                 ),
-                "config_version": func.greatest(
-                    PostMetricSnapshot.config_version,
-                    statement.excluded.config_version,
-                ),
             },
-        )
-    )
+            where=(PostMetricSnapshot.config_version == statement.excluded.config_version),
+        ).returning(PostMetricSnapshot.post_id)
+    ).scalar_one_or_none()
+    if persisted_post_id is None:
+        raise SnapshotConfigConflict("snapshot slot belongs to another configuration")

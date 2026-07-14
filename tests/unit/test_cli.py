@@ -1,11 +1,16 @@
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from typer.testing import CliRunner
 
 import maple_monitor.cli as cli
 from maple_monitor.collection.client import ListPageTransportError
+from maple_monitor.collection.repository import SnapshotConfigConflict
 
 
 app = cli.app
@@ -106,3 +111,55 @@ def test_collect_command_redacts_invalid_configuration(
     assert result.exit_code == 1
     assert json.loads(result.stdout) == {"error": "collection_failed"}
     assert leaked_detail not in result.stdout
+
+
+def test_collect_command_redacts_snapshot_config_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    leaked_detail = "config=f" + "f" * 63 + " title=do-not-leak"
+
+    class _Engine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    engine = _Engine()
+
+    @contextmanager
+    def fake_session_scope(active_engine: object) -> Iterator[object]:
+        assert active_engine is engine
+        yield object()
+
+    def fail_collection(*args: object, **kwargs: object) -> object:
+        raise SnapshotConfigConflict(leaked_detail)
+
+    monkeypatch.setattr(
+        cli,
+        "fetch_list_page",
+        lambda board_id: Path("tests/fixtures/list_warrior.html").read_bytes(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_current_kst_time",
+        lambda: datetime(2026, 7, 14, 6, 25, tzinfo=ZoneInfo("Asia/Seoul")),
+    )
+    monkeypatch.setattr(cli, "create_engine_from_env", lambda: engine)
+    monkeypatch.setattr(cli, "session_scope", fake_session_scope)
+    monkeypatch.setattr(cli, "collect_board_slot", fail_collection)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "collect-metadata",
+            "--board",
+            "2294",
+            "--at",
+            "2026-07-14T06:20:00+09:00",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {"error": "collection_failed"}
+    assert leaked_detail not in result.stdout
+    assert engine.disposed

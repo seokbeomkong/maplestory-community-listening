@@ -19,17 +19,46 @@ CANONICAL_HOST: Final = "www.inven.co.kr"
 KST: Final = ZoneInfo("Asia/Seoul")
 
 _REQUIRED_HEADERS: Final = {
+    "번호": "number",
     "제목": "title",
+    "글쓴이": "author",
     "등록일": "date",
     "조회": "views",
     "추천": "recommendations",
 }
+_EXPECTED_CELL_CLASSES: Final = {
+    "number": "num",
+    "title": "tit",
+    "author": "user",
+    "date": "date",
+    "views": "view",
+    "recommendations": "reco",
+}
 _ARTICLE_PATH = re.compile(r"/board/maple/(?P<board>[0-9]+)/(?P<post>[0-9]+)\Z")
-_COMMENT_SUFFIX = re.compile(r"\[(?P<count>[0-9][0-9,]*)]\s*\Z")
-_CATEGORY_PREFIX = re.compile(r"^\[(?P<category>[^]]+)]\s*")
+_CATEGORY_MARKER = re.compile(r"\[(?P<category>[^][\r\n]+)]\Z")
+_COMMENT_MARKER = re.compile(r"\[(?P<count>(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+))]\Z")
 _INTEGER = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\Z")
 _NOTICE_CLASSES: Final = frozenset({"notice", "notice-row"})
 _AD_CLASSES: Final = frozenset({"ad", "ad-row", "advertisement"})
+_RECOGNIZED_BOARD_CATEGORIES: Final = frozenset(
+    {
+        "팁/정보",
+        "히어로",
+        "팔라딘",
+        "다크나이트",
+        "소울마스터",
+        "아란",
+        "데몬슬레이어",
+        "미하일",
+        "카이저",
+        "데몬어벤져",
+        "제로",
+        "블래스터",
+        "아델",
+        "렌",
+        "핑크빈",
+    }
+)
 
 
 class InvalidSourcePage(ValueError):
@@ -54,7 +83,7 @@ def _find_board_table(soup: BeautifulSoup) -> tuple[Tag, dict[str, int]]:
         if not any(label in _REQUIRED_HEADERS for label in labels):
             continue
         saw_header_candidate = True
-        if all(labels.count(label) == 1 for label in _REQUIRED_HEADERS):
+        if labels == list(_REQUIRED_HEADERS):
             return table, {
                 target: labels.index(label) for label, target in _REQUIRED_HEADERS.items()
             }
@@ -101,37 +130,61 @@ def _article_identity(raw_href: object, expected_board: int) -> tuple[int, str]:
     return post_id, f"https://{CANONICAL_HOST}/board/maple/{expected_board}/{post_id}"
 
 
-def _extract_category(title_cell: Tag, anchor: Tag) -> str:
-    category_node = title_cell.select_one(".category, .cate")
-    if category_node is not None:
-        category = _normalized_text(category_node).strip("[]").strip()
+def _extract_category(title_cell: Tag, anchor: Tag) -> tuple[str, Tag]:
+    category_nodes = title_cell.select("span.category")
+    direct_anchor_categories = anchor.find_all("span", class_="category", recursive=False)
+    if (
+        len(category_nodes) != 1
+        or len(direct_anchor_categories) != 1
+        or category_nodes[0] is not direct_anchor_categories[0]
+    ):
+        raise InvalidSourcePage("article category marker is missing or ambiguous")
+    category_node = direct_anchor_categories[0]
+    match = _CATEGORY_MARKER.fullmatch(_normalized_text(category_node))
+    if match is None:
+        raise InvalidSourcePage("article category marker is invalid")
+    category = match["category"].strip()
+    if category not in _RECOGNIZED_BOARD_CATEGORIES:
+        raise InvalidSourcePage("article category is unsupported")
+    return category, category_node
+
+
+def _normalized_node_sequence(nodes: list[object]) -> str:
+    values: list[str] = []
+    for node in nodes:
+        value = _normalized_text(node) if isinstance(node, Tag) else str(node).strip()
+        if value:
+            values.append(value)
+    return " ".join(" ".join(values).split())
+
+
+def _extract_title(anchor: Tag, category_node: Tag) -> str:
+    children = list(anchor.children)
+    if category_node in children:
+        marker_index = children.index(category_node)
+        if _normalized_node_sequence(children[:marker_index]):
+            raise InvalidSourcePage("article category marker is not a title prefix")
+        title = _normalized_node_sequence(children[marker_index + 1 :])
+    elif anchor in category_node.parents:
+        raise InvalidSourcePage("article category marker structure is invalid")
     else:
-        match = _CATEGORY_PREFIX.match(_normalized_text(anchor))
-        category = match["category"].strip() if match is not None else ""
-    if category != SUPPORTED_CATEGORY:
-        raise InvalidSourcePage("article category is missing or unsupported")
-    return category
-
-
-def _extract_title_and_comments(title_cell: Tag, anchor: Tag) -> tuple[str, int]:
-    title = _normalized_text(anchor)
-    title = _CATEGORY_PREFIX.sub("", title, count=1)
-    marker = title_cell.select_one(".comment, .cnt, .comment-count")
-    comments = (
-        _parse_nonnegative_integer(_normalized_text(marker).strip("[]"), field="comment")
-        if marker is not None
-        else 0
-    )
-    suffix = _COMMENT_SUFFIX.search(title)
-    if suffix is not None:
-        comments = max(
-            comments,
-            _parse_nonnegative_integer(suffix["count"], field="comment"),
-        )
-        title = title[: suffix.start()].rstrip()
+        title = _normalized_text(anchor)
     if not title:
         raise InvalidSourcePage("article title is missing")
-    return title, comments
+    return title
+
+
+def _extract_comments(text_wrap: Tag) -> int:
+    markers = text_wrap.find_all("span", class_="con-comment", recursive=False)
+    if len(markers) != 1:
+        raise InvalidSourcePage("article comment marker is missing or ambiguous")
+    value = _normalized_text(markers[0])
+    if not value:
+        return 0
+    match = _COMMENT_MARKER.fullmatch(value)
+    if match is None:
+        raise InvalidSourcePage("article comment marker is invalid")
+    return _parse_nonnegative_integer(match["count"], field="comment")
 
 
 def _parse_source_time(value: str, fetched_at: datetime) -> datetime:
@@ -197,42 +250,64 @@ def _parse_article_row(
     columns: dict[str, int],
     board_id: int,
     fetched_at: datetime,
-) -> PostListItem | None:
+) -> tuple[bool, PostListItem | None]:
     cells = row.find_all("td", recursive=False)
     if not cells:
-        return None
-    if len(cells) <= max(columns.values()):
+        if _normalized_text(row):
+            raise InvalidSourcePage("article row structure is unknown")
+        return False, None
+    if len(cells) < len(_REQUIRED_HEADERS):
         raise InvalidSourcePage("article row has fewer cells than its header")
+    if len(cells) > len(_REQUIRED_HEADERS):
+        raise InvalidSourcePage("article row has more cells than its header")
+
+    for column, expected_class in _EXPECTED_CELL_CLASSES.items():
+        cell_classes = {str(value).casefold() for value in cells[columns[column]].get("class", [])}
+        if expected_class not in cell_classes:
+            raise InvalidSourcePage("article cell structure is invalid")
 
     title_cell = cells[columns["title"]]
-    anchors = title_cell.select("a[href]")
-    article_anchors = [
-        anchor for anchor in anchors if "/board/maple/" in str(anchor.get("href", ""))
+    text_wraps = title_cell.find_all("div", class_="text-wrap", recursive=False)
+    if len(text_wraps) != 1:
+        raise InvalidSourcePage("article title structure is missing or ambiguous")
+    text_wrap = text_wraps[0]
+    anchors = text_wrap.select("a.subject-link[href]")
+    if len(anchors) != 1:
+        raise InvalidSourcePage("article anchor is missing or ambiguous")
+    anchor = anchors[0]
+    article_links = [
+        candidate
+        for candidate in text_wrap.select("a[href]")
+        if "/board/maple/" in str(candidate.get("href", ""))
     ]
-    if not article_anchors:
-        if anchors:
-            raise InvalidSourcePage("article URL is invalid")
-        return None
-    if len(article_anchors) != 1:
+    if article_links != [anchor]:
         raise InvalidSourcePage("article URL is ambiguous")
-    anchor = article_anchors[0]
     post_id, source_url = _article_identity(anchor.get("href"), board_id)
-    category = _extract_category(title_cell, anchor)
-    title, comments = _extract_title_and_comments(title_cell, anchor)
+    category, category_node = _extract_category(title_cell, anchor)
+    title = _extract_title(anchor, category_node)
+    comments = _extract_comments(text_wrap)
     is_notice, is_ad = _row_kind(row, title_cell)
+    published_at = _parse_source_time(_normalized_text(cells[columns["date"]]), fetched_at)
+    views = _parse_nonnegative_integer(
+        _normalized_text(cells[columns["views"]]),
+        field="view",
+    )
+    recommendations = _parse_nonnegative_integer(
+        _normalized_text(cells[columns["recommendations"]]),
+        field="recommendation",
+    )
+    if category != SUPPORTED_CATEGORY:
+        return True, None
 
-    return PostListItem(
+    return True, PostListItem(
         board_id=board_id,
         post_id=post_id,
         analysis_unit=SUPPORTED_ANALYSIS_UNIT,
         category=category,
         title=title,
-        published_at=_parse_source_time(_normalized_text(cells[columns["date"]]), fetched_at),
-        views=_parse_nonnegative_integer(_normalized_text(cells[columns["views"]]), field="view"),
-        recommendations=_parse_nonnegative_integer(
-            _normalized_text(cells[columns["recommendations"]]),
-            field="recommendation",
-        ),
+        published_at=published_at,
+        views=views,
+        recommendations=recommendations,
         comments=comments,
         source_url=source_url,
         is_notice=is_notice,
@@ -272,11 +347,13 @@ def parse_list_page(board_id: int, html: bytes, fetched_at: datetime) -> list[Po
 
     soup = BeautifulSoup(decoded, "lxml")
     table, columns = _find_board_table(soup)
-    items = [
-        item
-        for row in table.select("tbody tr")
-        if (item := _parse_article_row(row, columns, board_id, fetched_at)) is not None
-    ]
-    if not items:
+    items: list[PostListItem] = []
+    validated_article_rows = 0
+    for row in table.select("tbody tr"):
+        is_article, item = _parse_article_row(row, columns, board_id, fetched_at)
+        validated_article_rows += int(is_article)
+        if item is not None:
+            items.append(item)
+    if not validated_article_rows:
         raise InvalidSourcePage("no canonical article rows found")
     return items

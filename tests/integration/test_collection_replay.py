@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,6 +19,7 @@ from maple_monitor.config import LoadedSettings, load_settings
 
 KST = ZoneInfo("Asia/Seoul")
 SLOT = datetime(2026, 7, 14, 6, 20, tzinfo=KST)
+FETCHED_AT = datetime(2026, 7, 14, 6, 25, tzinfo=KST)
 SETTINGS_PATH = Path("config/settings.yaml")
 
 
@@ -58,6 +59,7 @@ def _collect(
     board_id: int = 2294,
     slot: datetime = SLOT,
     settings: LoadedSettings | None = None,
+    fetched_at: datetime | None = None,
 ) -> CollectionSummary:
     from maple_monitor.collection.service import collect_board_slot
 
@@ -67,7 +69,150 @@ def _collect(
         items,  # type: ignore[arg-type]
         slot,
         settings or _settings(),
+        fetched_at=fetched_at or FETCHED_AT,
     )
+
+
+def _board_exists(db_engine: Engine) -> bool:
+    with Session(db_engine) as inspection:
+        return (
+            inspection.execute(
+                text("SELECT count(*) FROM boards WHERE id = :board_id"),
+                {"board_id": 2294},
+            ).scalar_one()
+            == 1
+        )
+
+
+def _remove_persisted_post(
+    db_engine: Engine,
+    post_id: int,
+    *,
+    remove_orphaned_board: bool = False,
+) -> None:
+    with Session(db_engine) as cleanup:
+        cleanup.execute(
+            text(
+                "DELETE FROM post_metric_snapshots "
+                "WHERE board_id = :board_id AND post_id = :post_id"
+            ),
+            {"board_id": 2294, "post_id": post_id},
+        )
+        cleanup.execute(
+            text("DELETE FROM posts WHERE board_id = :board_id AND post_id = :post_id"),
+            {"board_id": 2294, "post_id": post_id},
+        )
+        if remove_orphaned_board:
+            cleanup.execute(
+                text(
+                    "DELETE FROM boards WHERE id = :board_id "
+                    "AND NOT EXISTS (SELECT 1 FROM posts WHERE board_id = :board_id)"
+                ),
+                {"board_id": 2294},
+            )
+        cleanup.commit()
+
+
+def _preseed_post_without_snapshot(db_engine: Engine, post_id: int) -> None:
+    newer_slot = datetime(2026, 7, 14, 12, 20, tzinfo=KST)
+    with Session(db_engine) as session:
+        _collect(
+            session,
+            [
+                _item(
+                    post_id,
+                    title="동시성 사전 시드",
+                    published_at=newer_slot,
+                )
+            ],
+            slot=newer_slot,
+            fetched_at=datetime(2026, 7, 14, 12, 25, tzinfo=KST),
+        )
+        session.commit()
+    with Session(db_engine) as session:
+        session.execute(
+            text(
+                "DELETE FROM post_metric_snapshots "
+                "WHERE board_id = :board_id AND post_id = :post_id "
+                "AND observed_at_slot_kst = :slot"
+            ),
+            {"board_id": 2294, "post_id": post_id, "slot": newer_slot},
+        )
+        session.commit()
+
+
+def _install_snapshot_overlap_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Event, Event]:
+    import maple_monitor.collection.service as collection_service
+
+    real_upsert_snapshot = collection_service.upsert_snapshot
+    both_reached_snapshot = Event()
+    release_snapshot_writes = Event()
+    counter_lock = Lock()
+    reached_count = 0
+
+    def synchronized_upsert_snapshot(*args: object, **kwargs: object) -> None:
+        nonlocal reached_count
+        with counter_lock:
+            reached_count += 1
+            if reached_count == 2:
+                both_reached_snapshot.set()
+        assert release_snapshot_writes.wait(timeout=10)
+        real_upsert_snapshot(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(collection_service, "upsert_snapshot", synchronized_upsert_snapshot)
+    return both_reached_snapshot, release_snapshot_writes
+
+
+def test_committed_post_cleanup_preserves_a_preexisting_empty_board(
+    db_engine: Engine,
+) -> None:
+    with Session(db_engine) as setup:
+        board_preexisting = (
+            setup.execute(
+                text("SELECT count(*) FROM boards WHERE id = :board_id"),
+                {"board_id": 2294},
+            ).scalar_one()
+            == 1
+        )
+        setup.execute(
+            text(
+                "INSERT INTO boards (id, name, kind) VALUES (:board_id, :name, :kind) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"board_id": 2294, "name": "전사", "kind": "job"},
+        )
+        assert (
+            setup.execute(
+                text("SELECT count(*) FROM posts WHERE board_id = :board_id"),
+                {"board_id": 2294},
+            ).scalar_one()
+            == 0
+        )
+        setup.commit()
+
+    try:
+        _remove_persisted_post(db_engine, 919999)
+        with Session(db_engine) as verification:
+            assert (
+                verification.execute(
+                    text("SELECT count(*) FROM boards WHERE id = :board_id"),
+                    {"board_id": 2294},
+                ).scalar_one()
+                == 1
+            )
+    finally:
+        if not board_preexisting:
+            with Session(db_engine) as cleanup:
+                cleanup.execute(
+                    text(
+                        "DELETE FROM boards WHERE id = :board_id "
+                        "AND NOT EXISTS (SELECT 1 FROM posts WHERE board_id = :board_id)"
+                    ),
+                    {"board_id": 2294},
+                )
+                cleanup.commit()
 
 
 def test_same_slot_replay_keeps_one_snapshot_at_the_highest_counters(
@@ -104,6 +249,70 @@ def test_same_slot_replay_keeps_one_snapshot_at_the_highest_counters(
     assert post.current_category == "히어로"
     assert post.last_seen_at == SLOT
     assert board == ("전사", "job")
+
+
+def test_same_config_replays_merge_counters_and_actual_fetch_time_monotonically(
+    db_session: Session,
+) -> None:
+    earlier = datetime(2026, 7, 14, 6, 24, tzinfo=KST)
+    later = datetime(2026, 7, 14, 6, 26, tzinfo=KST)
+
+    _collect(
+        db_session,
+        [_item(910002, views=100, recommendations=5, comments=1)],
+        fetched_at=later,
+    )
+    _collect(
+        db_session,
+        [_item(910002, views=150, recommendations=2, comments=4)],
+        fetched_at=earlier,
+    )
+    _collect(
+        db_session,
+        [_item(910003, views=150, recommendations=2, comments=4)],
+        fetched_at=earlier,
+    )
+    _collect(
+        db_session,
+        [_item(910003, views=100, recommendations=5, comments=1)],
+        fetched_at=later,
+    )
+
+    rows = db_session.execute(
+        text(
+            "SELECT post_id, views, recommendations, comments, observed_at_actual "
+            "FROM post_metric_snapshots WHERE board_id = :board_id "
+            "AND post_id IN (:first, :second) ORDER BY post_id"
+        ),
+        {"board_id": 2294, "first": 910002, "second": 910003},
+    ).all()
+    assert rows == [
+        (910002, 150, 5, 4, later),
+        (910003, 150, 5, 4, later),
+    ]
+
+
+@pytest.mark.parametrize(
+    "fetched_at",
+    [
+        datetime(2026, 7, 14, 6, 25),
+        datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
+    ],
+)
+def test_rejects_invalid_actual_fetch_time_before_writing(
+    db_session: Session,
+    fetched_at: datetime,
+) -> None:
+    with pytest.raises(ValueError, match="fetched_at"):
+        _collect(db_session, [_item(910004)], fetched_at=fetched_at)
+
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM posts WHERE board_id = :board_id AND post_id = :post_id"),
+            {"board_id": 2294, "post_id": 910004},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_duplicates_are_order_independent_and_invalid_observations_are_rejected(
@@ -331,24 +540,209 @@ def test_equal_slot_replays_converge_on_one_deterministic_metadata_observation(
     ]
 
 
-def test_snapshot_config_provenance_is_order_independent(db_session: Session) -> None:
-    lower_settings = _settings().model_copy(update={"config_version": "0" * 64})
-    higher_settings = _settings().model_copy(update={"config_version": "f" * 64})
+@pytest.mark.parametrize(
+    ("post_id", "first_version", "conflicting_version"),
+    [
+        (910043, "0" * 64, "f" * 64),
+        (910044, "f" * 64, "0" * 64),
+    ],
+)
+def test_snapshot_rejects_mismatched_config_in_both_sequential_orders_and_rolls_back(
+    db_engine: Engine,
+    post_id: int,
+    first_version: str,
+    conflicting_version: str,
+) -> None:
+    first_settings = _settings().model_copy(update={"config_version": first_version})
+    conflicting_settings = _settings().model_copy(update={"config_version": conflicting_version})
+    first_fetch = datetime(2026, 7, 14, 6, 24, tzinfo=KST)
+    conflicting_fetch = datetime(2026, 7, 14, 6, 29, tzinfo=KST)
+    first_item = _item(
+        post_id,
+        title="첫 구성 제목",
+        published_at=datetime(2026, 7, 14, 6, 10, tzinfo=KST),
+        views=100,
+        recommendations=2,
+        comments=3,
+    )
+    conflicting_item = _item(
+        post_id,
+        title="충돌 구성 제목",
+        published_at=datetime(2026, 7, 14, 6, 19, tzinfo=KST),
+        views=999,
+        recommendations=99,
+        comments=88,
+    )
+    board_preexisting = _board_exists(db_engine)
 
-    _collect(db_session, [_item(910043)], settings=lower_settings)
-    _collect(db_session, [_item(910043, views=110)], settings=higher_settings)
-    _collect(db_session, [_item(910044)], settings=higher_settings)
-    _collect(db_session, [_item(910044, views=110)], settings=lower_settings)
+    try:
+        _remove_persisted_post(db_engine, post_id)
+        with Session(db_engine) as winner:
+            _collect(
+                winner,
+                [first_item],
+                settings=first_settings,
+                fetched_at=first_fetch,
+            )
+            winner.commit()
 
-    rows = db_session.execute(
-        text(
-            "SELECT post_id, config_version FROM post_metric_snapshots "
-            "WHERE board_id = :board_id AND post_id IN (:first, :second) "
-            "ORDER BY post_id"
+        with Session(db_engine) as contender:
+            with pytest.raises(RuntimeError) as caught:
+                _collect(
+                    contender,
+                    [conflicting_item],
+                    settings=conflicting_settings,
+                    fetched_at=conflicting_fetch,
+                )
+            contender.rollback()
+
+        from maple_monitor.collection.repository import SnapshotConfigConflict
+
+        assert type(caught.value) is SnapshotConfigConflict
+        assert str(caught.value) == "snapshot slot belongs to another configuration"
+        assert caught.value.__cause__ is None
+        assert first_version not in str(caught.value)
+        assert conflicting_version not in str(caught.value)
+
+        with Session(db_engine) as verification:
+            row = verification.execute(
+                text(
+                    "SELECT posts.title, posts.published_at, snapshots.views, "
+                    "snapshots.recommendations, snapshots.comments, "
+                    "snapshots.observed_at_actual, snapshots.config_version "
+                    "FROM posts JOIN post_metric_snapshots AS snapshots "
+                    "USING (board_id, post_id) "
+                    "WHERE board_id = :board_id AND post_id = :post_id"
+                ),
+                {"board_id": 2294, "post_id": post_id},
+            ).one()
+        assert row == (
+            "첫 구성 제목",
+            datetime(2026, 7, 14, 6, 10, tzinfo=KST),
+            100,
+            2,
+            3,
+            first_fetch,
+            first_version,
+        )
+    finally:
+        _remove_persisted_post(
+            db_engine,
+            post_id,
+            remove_orphaned_board=not board_preexisting,
+        )
+
+
+def test_concurrent_mismatched_configs_leave_one_coherent_winner(
+    db_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_id = 910045
+    first_settings = _settings().model_copy(update={"config_version": "0" * 64})
+    conflicting_settings = _settings().model_copy(update={"config_version": "f" * 64})
+
+    def collect_candidate(
+        label: str,
+        settings: LoadedSettings,
+        item: PostListItem,
+        fetched_at: datetime,
+    ) -> tuple[str, CollectionSummary | Exception]:
+        with Session(db_engine) as session:
+            try:
+                summary = _collect(
+                    session,
+                    [item],
+                    settings=settings,
+                    fetched_at=fetched_at,
+                )
+                session.commit()
+                return label, summary
+            except Exception as exc:
+                session.rollback()
+                return label, exc
+
+    candidates = {
+        "first": (
+            first_settings,
+            _item(
+                post_id,
+                title="동시 첫 구성",
+                published_at=datetime(2026, 7, 14, 6, 10, tzinfo=KST),
+                views=100,
+                recommendations=2,
+                comments=3,
+            ),
+            datetime(2026, 7, 14, 6, 24, tzinfo=KST),
         ),
-        {"board_id": 2294, "first": 910043, "second": 910044},
-    ).all()
-    assert rows == [(910043, "f" * 64), (910044, "f" * 64)]
+        "conflicting": (
+            conflicting_settings,
+            _item(
+                post_id,
+                title="동시 충돌 구성",
+                published_at=datetime(2026, 7, 14, 6, 19, tzinfo=KST),
+                views=999,
+                recommendations=99,
+                comments=88,
+            ),
+            datetime(2026, 7, 14, 6, 29, tzinfo=KST),
+        ),
+    }
+    board_preexisting = _board_exists(db_engine)
+    release_snapshot_writes: Event | None = None
+
+    try:
+        _remove_persisted_post(db_engine, post_id)
+        _preseed_post_without_snapshot(db_engine, post_id)
+        both_reached_snapshot, release_snapshot_writes = _install_snapshot_overlap_barrier(
+            monkeypatch
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(collect_candidate, label, settings, item, fetched_at)
+                for label, (settings, item, fetched_at) in candidates.items()
+            ]
+            assert both_reached_snapshot.wait(timeout=10)
+            release_snapshot_writes.set()
+            outcomes = [future.result(timeout=20) for future in futures]
+
+        successes = [
+            (label, value) for label, value in outcomes if isinstance(value, CollectionSummary)
+        ]
+        errors = [(label, value) for label, value in outcomes if isinstance(value, Exception)]
+        assert len(successes) == 1
+        assert successes[0][1] == CollectionSummary(0, 1, 0, 0)
+        assert len(errors) == 1
+
+        from maple_monitor.collection.repository import SnapshotConfigConflict
+
+        assert type(errors[0][1]) is SnapshotConfigConflict
+        assert str(errors[0][1]) == "snapshot slot belongs to another configuration"
+        with Session(db_engine) as verification:
+            row = verification.execute(
+                text(
+                    "SELECT views, recommendations, comments, observed_at_actual, "
+                    "config_version FROM post_metric_snapshots "
+                    "WHERE board_id = :board_id AND post_id = :post_id"
+                ),
+                {"board_id": 2294, "post_id": post_id},
+            ).one()
+        winner_label = successes[0][0]
+        winner_settings, winner_item, winner_fetch = candidates[winner_label]
+        assert row == (
+            winner_item.views,
+            winner_item.recommendations,
+            winner_item.comments,
+            winner_fetch,
+            winner_settings.config_version,
+        )
+    finally:
+        if release_snapshot_writes is not None:
+            release_snapshot_writes.set()
+        _remove_persisted_post(
+            db_engine,
+            post_id,
+            remove_orphaned_board=not board_preexisting,
+        )
 
 
 def test_postgresql_unsafe_titles_are_rejected_without_losing_safe_items(
@@ -430,7 +824,7 @@ def test_collect_cli_uses_mocked_client_and_isolated_database(
 
     post_ids = (910071, 910072, 910073)
     html = Path("tests/fixtures/list_warrior.html").read_bytes()
-    for fixture_id, test_id in zip((900001, 900002, 900003), post_ids, strict=True):
+    for fixture_id, test_id in zip((900001, 900002, 900004), post_ids, strict=True):
         html = html.replace(str(fixture_id).encode(), str(test_id).encode())
 
     with Session(db_engine) as inspection:
@@ -569,11 +963,17 @@ def test_collect_cli_resolves_source_time_against_actual_fetch_time(
     post_id = 910074
     html = (
         '<!doctype html><html lang="ko"><body><table class="board-list">'
-        "<thead><tr><th>번호</th><th>제목</th><th>등록일</th>"
-        "<th>조회</th><th>추천</th></tr></thead><tbody><tr>"
-        f'<td>{post_id}</td><td><span class="category">히어로</span>'
-        f'<a href="/board/maple/2294/{post_id}">실제 수집 시각 검증</a></td>'
-        "<td>06:23</td><td>10</td><td>1</td></tr></tbody></table></body></html>"
+        '<thead><tr><th class="num">번호</th><th class="tit">제목</th>'
+        '<th class="user">글쓴이</th><th class="date">등록일</th>'
+        '<th class="view">조회</th><th class="reco">추천</th></tr></thead><tbody><tr>'
+        f'<td class="num">{post_id}</td><td class="tit"><div class="text-wrap"><div>'
+        '<span class="user-icon"></span>'
+        f'<a class="subject-link" href="/board/maple/2294/{post_id}">'
+        '<span class="category">[히어로]</span> 실제 수집 시각 검증</a></div>'
+        '<span class="con-comment"></span></div></td>'
+        '<td class="user">합성작성자</td><td class="date">06:23</td>'
+        '<td class="view">10</td><td class="reco">1</td>'
+        "</tr></tbody></table></body></html>"
     ).encode()
     with Session(db_engine) as inspection:
         board_preexisting = (
@@ -619,14 +1019,19 @@ def test_collect_cli_resolves_source_time_against_actual_fetch_time(
 
         assert result.exit_code == 0, str(result.exception)
         with Session(db_engine) as verification:
-            published_at = verification.execute(
+            persisted_times = verification.execute(
                 text(
-                    "SELECT published_at FROM posts "
+                    "SELECT posts.published_at, snapshots.observed_at_actual "
+                    "FROM posts JOIN post_metric_snapshots AS snapshots "
+                    "USING (board_id, post_id) "
                     "WHERE board_id = :board_id AND post_id = :post_id"
                 ),
                 {"board_id": 2294, "post_id": post_id},
-            ).scalar_one()
-        assert published_at == datetime(2026, 7, 14, 6, 23, tzinfo=KST)
+            ).one()
+        assert persisted_times == (
+            datetime(2026, 7, 14, 6, 23, tzinfo=KST),
+            datetime(2026, 7, 14, 6, 25, tzinfo=KST),
+        )
     finally:
         with Session(db_engine) as cleanup:
             cleanup.execute(
@@ -653,121 +1058,88 @@ def test_collect_cli_resolves_source_time_against_actual_fetch_time(
 
 def test_concurrent_same_slot_collectors_converge_on_one_monotonic_snapshot(
     db_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     post_id = 910060
-    higher_written = Event()
-    lower_started = Event()
-    release_higher = Event()
-    with Session(db_engine) as inspection:
-        board_preexisting = (
-            inspection.execute(
-                text("SELECT count(*) FROM boards WHERE id = :board_id"),
-                {"board_id": 2294},
-            ).scalar_one()
-            == 1
-        )
-        inspection.execute(
-            text(
-                "DELETE FROM post_metric_snapshots "
-                "WHERE board_id = :board_id AND post_id = :post_id"
+    earlier_fetch = datetime(2026, 7, 14, 6, 24, tzinfo=KST)
+    later_fetch = datetime(2026, 7, 14, 6, 29, tzinfo=KST)
+    observations = (
+        (
+            _item(
+                post_id,
+                title="높은 조회와 댓글",
+                published_at=datetime(2026, 7, 14, 6, 10, tzinfo=KST),
+                views=150,
+                recommendations=2,
+                comments=5,
             ),
-            {"board_id": 2294, "post_id": post_id},
-        )
-        inspection.execute(
-            text("DELETE FROM posts WHERE board_id = :board_id AND post_id = :post_id"),
-            {"board_id": 2294, "post_id": post_id},
-        )
-        inspection.commit()
+            earlier_fetch,
+        ),
+        (
+            _item(
+                post_id,
+                title="늦은 수집과 추천",
+                published_at=datetime(2026, 7, 14, 6, 0, tzinfo=KST),
+                views=100,
+                recommendations=4,
+                comments=3,
+            ),
+            later_fetch,
+        ),
+    )
 
-    def collect_higher() -> CollectionSummary:
+    def collect_observation(item: PostListItem, fetched_at: datetime) -> CollectionSummary:
         with Session(db_engine) as session:
             summary = _collect(
                 session,
-                [
-                    _item(
-                        post_id,
-                        title="나 제목",
-                        published_at=datetime(2026, 7, 14, 6, 10, tzinfo=KST),
-                        views=150,
-                        recommendations=4,
-                        comments=5,
-                    )
-                ],
-            )
-            higher_written.set()
-            assert release_higher.wait(timeout=10)
-            session.commit()
-            return summary
-
-    def collect_lower() -> CollectionSummary:
-        assert higher_written.wait(timeout=10)
-        with Session(db_engine) as session:
-            lower_started.set()
-            summary = _collect(
-                session,
-                [
-                    _item(
-                        post_id,
-                        title="가 제목",
-                        published_at=datetime(2026, 7, 14, 6, 0, tzinfo=KST),
-                        views=100,
-                        recommendations=2,
-                        comments=3,
-                    )
-                ],
+                [item],
+                fetched_at=fetched_at,
             )
             session.commit()
             return summary
 
+    board_preexisting = _board_exists(db_engine)
+    release_snapshot_writes: Event | None = None
     try:
+        _remove_persisted_post(db_engine, post_id)
+        _preseed_post_without_snapshot(db_engine, post_id)
+        both_reached_snapshot, release_snapshot_writes = _install_snapshot_overlap_barrier(
+            monkeypatch
+        )
         with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(collect_higher), executor.submit(collect_lower)]
-            assert higher_written.wait(timeout=10)
-            assert lower_started.wait(timeout=10)
-            release_higher.set()
+            futures = [
+                executor.submit(collect_observation, item, fetched_at)
+                for item, fetched_at in observations
+            ]
+            assert both_reached_snapshot.wait(timeout=10)
+            release_snapshot_writes.set()
             summaries = [future.result(timeout=20) for future in futures]
 
         with Session(db_engine) as verification:
             row = verification.execute(
                 text(
-                    "SELECT count(*), max(views), max(recommendations), max(comments), "
-                    "max(posts.title), max(posts.published_at) "
-                    "FROM post_metric_snapshots JOIN posts USING (board_id, post_id) "
+                    "SELECT views, recommendations, comments, observed_at_actual, "
+                    "config_version FROM post_metric_snapshots "
                     "WHERE board_id = :board_id AND post_id = :post_id"
                 ),
                 {"board_id": 2294, "post_id": post_id},
             ).one()
-        assert sorted(summaries, key=lambda value: value.inserted) == [
+        assert summaries == [
             CollectionSummary(0, 1, 0, 0),
-            CollectionSummary(1, 0, 0, 0),
+            CollectionSummary(0, 1, 0, 0),
         ]
         assert row == (
-            1,
             150,
             4,
             5,
-            "나 제목",
-            datetime(2026, 7, 14, 6, 10, tzinfo=KST),
+            later_fetch,
+            _settings().config_version,
         )
     finally:
-        with Session(db_engine) as cleanup:
-            cleanup.execute(
-                text(
-                    "DELETE FROM post_metric_snapshots "
-                    "WHERE board_id = :board_id AND post_id = :post_id"
-                ),
-                {"board_id": 2294, "post_id": post_id},
-            )
-            cleanup.execute(
-                text("DELETE FROM posts WHERE board_id = :board_id AND post_id = :post_id"),
-                {"board_id": 2294, "post_id": post_id},
-            )
-            if not board_preexisting:
-                cleanup.execute(
-                    text(
-                        "DELETE FROM boards WHERE id = :board_id "
-                        "AND NOT EXISTS (SELECT 1 FROM posts WHERE board_id = :board_id)"
-                    ),
-                    {"board_id": 2294},
-                )
-            cleanup.commit()
+        if release_snapshot_writes is not None:
+            release_snapshot_writes.set()
+        _remove_persisted_post(
+            db_engine,
+            post_id,
+            remove_orphaned_board=not board_preexisting,
+        )

@@ -125,6 +125,13 @@ def _is_representable_aware_datetime(value: object) -> bool:
     return True
 
 
+def _validated_actual_fetch_time(fetched_at: object) -> datetime:
+    if not _is_representable_aware_datetime(fetched_at):
+        raise ValueError("fetched_at must be a representable timezone-aware datetime")
+    assert isinstance(fetched_at, datetime)
+    return fetched_at.astimezone(UTC)
+
+
 def _is_valid_item(item: object, board_id: int) -> bool:
     if not isinstance(item, PostListItem):
         return False
@@ -185,10 +192,13 @@ def collect_board_slot(
     items: Iterable[PostListItem],
     slot: datetime,
     loaded_settings: LoadedSettings,
+    *,
+    fetched_at: datetime,
 ) -> CollectionSummary:
     """Persist one bounded observation batch inside the caller-owned transaction."""
 
     canonical_slot = _validate_collection_context(board_id, slot, loaded_settings)
+    actual_fetch_time = _validated_actual_fetch_time(fetched_at)
     observations = _bounded_observations(items)
     grouped: dict[int, list[PostListItem]] = {}
     rejected = 0
@@ -239,6 +249,7 @@ def collect_board_slot(
             session,
             item,
             observed_at_slot_kst=canonical_slot,
+            observed_at_actual=actual_fetch_time,
             config_version=loaded_settings.config_version,
         )
 

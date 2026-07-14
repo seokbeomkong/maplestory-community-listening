@@ -7,7 +7,9 @@ import httpx
 
 
 SUPPORTED_BOARD_ID: Final = 2294
-CANONICAL_LIST_URL: Final = "https://www.inven.co.kr/board/maple/2294"
+CANONICAL_LIST_URL: Final = (
+    "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
+)
 MAX_LIST_RESPONSE_BYTES: Final = 512_000
 USER_AGENT: Final = "maple-inven-monitor/0.1 (bounded public metadata collector)"
 REQUEST_TIMEOUT: Final = httpx.Timeout(10.0, connect=5.0, write=5.0, pool=5.0)

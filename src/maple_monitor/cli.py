@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from maple_monitor.collection.client import ListPageClientError, fetch_list_page
 from maple_monitor.collection.parser import InvalidSourcePage, parse_list_page
+from maple_monitor.collection.repository import SnapshotConfigConflict
 from maple_monitor.collection.service import align_kst_slot, collect_board_slot
 from maple_monitor.config import LoadedSettings, load_settings
 from maple_monitor.db import create_engine_from_env
@@ -107,12 +108,14 @@ def collect_metadata(
                 items,
                 slot,
                 loaded_settings,
+                fetched_at=fetched_at,
             )
     except (
         InvalidSourcePage,
         KeyError,
         ListPageClientError,
         OSError,
+        SnapshotConfigConflict,
         SQLAlchemyError,
         TypeError,
         ValidationError,

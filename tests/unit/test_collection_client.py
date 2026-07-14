@@ -34,7 +34,9 @@ def test_fetches_only_the_supported_https_list_target_with_safe_headers() -> Non
     assert body == b"<html>bounded</html>"
     assert len(captured) == 1
     request = captured[0]
-    assert request.url == httpx.URL("https://www.inven.co.kr/board/maple/2294")
+    assert request.url == httpx.URL(
+        "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
+    )
     assert request.headers["user-agent"] == USER_AGENT
     assert "Mozilla" not in USER_AGENT
     assert "text/html" in request.headers["accept"]
@@ -82,7 +84,9 @@ def test_refuses_redirects_without_requesting_the_redirect_target() -> None:
         with pytest.raises(ListPageRedirectError) as caught:
             fetch_list_page(2294, client=client)
 
-    assert requested == ["https://www.inven.co.kr/board/maple/2294"]
+    assert requested == [
+        "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
+    ]
     assert secret_target not in str(caught.value)
     assert "token" not in str(caught.value)
 
