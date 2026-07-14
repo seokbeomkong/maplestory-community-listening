@@ -75,9 +75,9 @@ _TOOL_OR_SHELL_REQUEST = re.compile(
 )
 
 _SYSTEM_IMPERSONATION = re.compile(
-    r"(?:<\s*/?\s*system(?:\s|>)|\[\s*system\s*\]|\bsystem\s+(?:prompt|message|role)\b|"
+    r"(?:<\s*(?:/\s*)?system(?:\s|>)|\[\s*system\s*\]|\bsystem\s+(?:prompt|message|role)\b|"
     r"\byou\s+are\s+now\s+(?:the\s+)?(?:system|developer)\b|"
-    r"<\s*/?\s*시스템(?:\s|>)|\[\s*시스템\s*\]|시스템\s*(?:프롬프트|메시지|역할))",
+    r"<\s*(?:/\s*)?시스템(?:\s|>)|\[\s*시스템\s*\]|시스템\s*(?:프롬프트|메시지|역할))",
     re.IGNORECASE,
 )
 

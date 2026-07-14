@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 
 import pytest
 
 from maple_monitor.security.scanner import scan_untrusted
+
+
+_PERFORMANCE_TIMEOUT_SECONDS = 5.0
+_SYSTEM_TAG_PERFORMANCE_PROBE = (
+    "import sys\n"
+    "from maple_monitor.security.scanner import scan_untrusted\n"
+    "prefix = '< /' if sys.argv[2] == 'slash' else '<'\n"
+    "result = scan_untrusted(prefix + (' ' * 100_000) + sys.argv[1], 'body')\n"
+    "assert result.findings == ()\n"
+)
 
 
 def finding_ids(text: str, source_kind: str = "comment") -> list[str]:
@@ -59,6 +71,63 @@ def test_tool_and_shell_requests_are_reported(text: str) -> None:
 )
 def test_system_impersonation_is_reported(text: str) -> None:
     assert "prompt.system-impersonation" in finding_ids(text, "body")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_evidence"),
+    [
+        ("<system>message", "&lt;system&gt;"),
+        ("< / system>message", "&lt; / system&gt;"),
+        ("<시스템>메시지", "&lt;시스템&gt;"),
+        ("< / 시스템>메시지", "&lt; / 시스템&gt;"),
+    ],
+)
+def test_system_tag_impersonation_preserves_escaped_evidence(
+    text: str,
+    expected_evidence: str,
+) -> None:
+    result = scan_untrusted(text, "body")
+
+    finding = next(
+        item for item in result.findings if item.rule_id == "prompt.system-impersonation"
+    )
+    assert finding.escaped_evidence == expected_evidence
+
+
+@pytest.mark.parametrize(
+    ("suffix", "slash"),
+    [
+        pytest.param("systemx", False, id="english-no-slash"),
+        pytest.param("systemx", True, id="english-slash"),
+        pytest.param("시스템x", False, id="korean-no-slash"),
+        pytest.param("시스템x", True, id="korean-slash"),
+    ],
+)
+def test_long_nonmatching_system_tag_prefix_completes(
+    suffix: str,
+    slash: bool,
+) -> None:
+    arguments = [
+        sys.executable,
+        "-c",
+        _SYSTEM_TAG_PERFORMANCE_PROBE,
+        suffix,
+        "slash" if slash else "no-slash",
+    ]
+
+    try:
+        subprocess.run(
+            arguments,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_PERFORMANCE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            "system-tag near miss exceeded the generous "
+            f"{_PERFORMANCE_TIMEOUT_SECONDS:.0f}-second bound"
+        )
 
 
 def test_nfkc_normalization_catches_full_width_instruction_text() -> None:
