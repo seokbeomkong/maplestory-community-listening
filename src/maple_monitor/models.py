@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
     text,
@@ -131,6 +132,58 @@ class WorkItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class CumulativeTopPost(Base):
+    __tablename__ = "cumulative_top_posts"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "analysis_unit",
+            "metric",
+            "as_of_slot_kst",
+            "post_id",
+            name="cumulative_top_posts_pkey",
+        ),
+        UniqueConstraint(
+            "analysis_unit",
+            "metric",
+            "as_of_slot_kst",
+            "rank",
+            name="cumulative_top_posts_unit_metric_slot_rank_key",
+        ),
+        ForeignKeyConstraint(
+            ["board_id", "post_id"],
+            ["posts.board_id", "posts.post_id"],
+            name="cumulative_top_posts_post_fkey",
+        ),
+        CheckConstraint(
+            "metric IN ('views', 'recommendations', 'comments')",
+            name="cumulative_top_posts_metric_check",
+        ),
+        CheckConstraint("rank > 0", name="cumulative_top_posts_rank_check"),
+        CheckConstraint(
+            "metric_value >= 0",
+            name="cumulative_top_posts_metric_value_check",
+        ),
+    )
+
+    analysis_unit: Mapped[str] = mapped_column(Text)
+    metric: Mapped[str] = mapped_column(Text)
+    as_of_slot_kst: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    rank: Mapped[int] = mapped_column(Integer)
+    board_id: Mapped[int] = mapped_column(Integer)
+    post_id: Mapped[int] = mapped_column(BigInteger)
+    metric_value: Mapped[int] = mapped_column(BigInteger)
+    config_version: Mapped[str] = mapped_column(CHAR(64))
+
+
+Index(
+    "cumulative_latest_idx",
+    CumulativeTopPost.analysis_unit,
+    CumulativeTopPost.metric,
+    CumulativeTopPost.as_of_slot_kst.desc(),
+    CumulativeTopPost.rank,
+)
 
 
 class SecurityQuarantine(Base):

@@ -17,6 +17,14 @@ PHASE0_COMMANDS = [
     ["uv", "run", "pytest", "tests/integration/test_core_schema.py", "-q"],
 ]
 
+PHASE1_COMMANDS = [
+    ["uv", "run", "ruff", "check", "."],
+    ["uv", "run", "pytest", "tests/unit", "-q"],
+    ["uv", "run", "alembic", "upgrade", "head"],
+    ["uv", "run", "alembic", "check"],
+    ["uv", "run", "pytest", "tests/integration", "tests/dashboard", "-q"],
+]
+
 
 def _clear_postgresql_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for variable_name in tuple(os.environ):
@@ -28,6 +36,91 @@ def test_phase0_runs_all_configuration_and_database_checks() -> None:
     gates = run_path("scripts/gate.py")["GATES"]
 
     assert gates["phase0"] == PHASE0_COMMANDS
+
+
+def test_phase1_runs_prior_checks_plus_ranking_and_dashboard() -> None:
+    gates = run_path("scripts/gate.py")["GATES"]
+
+    assert gates["phase1"] == PHASE1_COMMANDS
+
+
+def test_phase1_rejects_unsafe_database_before_any_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gate = run_path("scripts/gate.py")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["scripts/gate.py", "phase1"])
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    launched_commands: list[list[str]] = []
+
+    def record_forbidden_command(command: list[str], **_kwargs: object) -> None:
+        launched_commands.append(command)
+        raise AssertionError(f"unsafe preflight launched command: {command}")
+
+    monkeypatch.setattr(subprocess, "run", record_forbidden_command)
+
+    assert gate["main"]() == 1
+    assert launched_commands == []
+    receipt = json.loads((tmp_path / ".test-receipts" / "phase1.json").read_text())
+    assert receipt["passed"] is False
+    assert receipt["results"] == []
+    assert receipt["error"]["stage"] == "database_preflight"
+
+
+def test_phase1_revalidates_environment_before_each_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gate = run_path("scripts/gate.py")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["scripts/gate.py", "phase1"])
+    _clear_postgresql_environment(monkeypatch)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://maple_monitor:secret@127.0.0.1:55432/maple_monitor_test",
+    )
+    launched_commands: list[list[str]] = []
+
+    def succeed_once_then_poison_environment(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        launched_commands.append(command)
+        monkeypatch.setenv("PGHOSTADDR", "203.0.113.10")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", succeed_once_then_poison_environment)
+
+    assert gate["main"]() == 1
+    assert launched_commands == [PHASE1_COMMANDS[0]]
+    receipt = json.loads((tmp_path / ".test-receipts" / "phase1.json").read_text())
+    assert receipt["passed"] is False
+    assert receipt["results"] == [{"command": PHASE1_COMMANDS[0], "returncode": 0}]
+    assert receipt["error"]["stage"] == "database_preflight"
+
+
+def test_phase1_safe_database_runs_every_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gate = run_path("scripts/gate.py")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["scripts/gate.py", "phase1"])
+    _clear_postgresql_environment(monkeypatch)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://maple_monitor:secret@127.0.0.1:55432/maple_monitor_test",
+    )
+    launched_commands: list[list[str]] = []
+
+    def succeed(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        launched_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", succeed)
+
+    assert gate["main"]() == 0
+    assert launched_commands == PHASE1_COMMANDS
 
 
 @pytest.mark.parametrize(

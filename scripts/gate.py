@@ -32,10 +32,17 @@ GATES = {
         ["uv", "run", "alembic", "upgrade", "head"],
         ["uv", "run", "pytest", "tests/integration/test_core_schema.py", "-q"],
     ],
+    "phase1": [
+        ["uv", "run", "ruff", "check", "."],
+        ["uv", "run", "pytest", "tests/unit", "-q"],
+        ["uv", "run", "alembic", "upgrade", "head"],
+        ["uv", "run", "alembic", "check"],
+        ["uv", "run", "pytest", "tests/integration", "tests/dashboard", "-q"],
+    ],
 }
 
 
-def _phase0_database_preflight_error(
+def _database_preflight_error(
     value: str | None,
     environment: Mapping[str, str],
 ) -> str | None:
@@ -74,11 +81,11 @@ def main() -> int:
 
     results: list[dict[str, object]] = []
     for command in GATES[phase]:
-        preflight_error = _phase0_database_preflight_error(
+        preflight_error = _database_preflight_error(
             os.environ.get("DATABASE_URL"),
             os.environ,
         )
-        if phase == "phase0" and preflight_error is not None:
+        if preflight_error is not None:
             receipt, output = _write_receipt(
                 phase,
                 results,

@@ -697,7 +697,9 @@ def test_health_command_returns_nonzero_json_when_database_is_unreachable() -> N
 def test_orm_metadata_describes_core_tables_and_snapshot_partition() -> None:
     from maple_monitor.models import Base, PostMetricSnapshot
 
-    assert set(Base.metadata.tables) == CORE_TABLES - {"post_metric_snapshots_default"}
+    assert set(Base.metadata.tables) == (CORE_TABLES - {"post_metric_snapshots_default"}) | {
+        "cumulative_top_posts"
+    }
     assert (
         PostMetricSnapshot.__table__.dialect_options["postgresql"]["partition_by"]
         == "RANGE (observed_at_slot_kst)"
