@@ -14,6 +14,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PostgreSQLUUID
@@ -130,3 +131,58 @@ class WorkItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class SecurityQuarantine(Base):
+    __tablename__ = "security_quarantine"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_kind",
+            "source_ref",
+            "content_hash",
+            name="security_quarantine_source_content_key",
+        ),
+        CheckConstraint(
+            "risk_score BETWEEN 0 AND 100",
+            name="security_quarantine_risk_score_check",
+        ),
+        CheckConstraint(
+            "review_state IN ('pending', 'released', 'confirmed')",
+            name="security_quarantine_review_state_check",
+        ),
+        CheckConstraint(
+            "source_kind ~ '^[a-z][a-z0-9_]{0,63}$'",
+            name="security_quarantine_source_kind_check",
+        ),
+        CheckConstraint(
+            "length(source_ref) BETWEEN 1 AND 512 AND source_ref = btrim(source_ref)",
+            name="security_quarantine_source_ref_check",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(findings) = 'array'",
+            name="security_quarantine_findings_array_check",
+        ),
+        CheckConstraint(
+            "(review_state = 'pending' AND reviewer IS NULL AND note IS NULL "
+            "AND released_at IS NULL) OR "
+            "(review_state = 'released' AND reviewer IS NOT NULL AND btrim(reviewer) <> '' "
+            "AND note IS NOT NULL AND btrim(note) <> '' AND released_at IS NOT NULL) OR "
+            "(review_state = 'confirmed' AND reviewer IS NOT NULL AND btrim(reviewer) <> '' "
+            "AND note IS NOT NULL AND btrim(note) <> '' AND released_at IS NULL)",
+            name="security_quarantine_review_audit_check",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    source_kind: Mapped[str] = mapped_column(Text)
+    source_ref: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(CHAR(64))
+    findings: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
+    risk_score: Mapped[int] = mapped_column(Integer)
+    quarantined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    review_state: Mapped[str] = mapped_column(Text)
+    reviewer: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

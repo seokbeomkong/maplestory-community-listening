@@ -35,6 +35,7 @@ CORE_TABLES = {
     "collection_runs",
     "run_slots",
     "work_items",
+    "security_quarantine",
 }
 
 COLUMN_CONTRACTS = {
@@ -96,6 +97,19 @@ COLUMN_CONTRACTS = {
         "created_at": (("timestamptz", None), False),
         "updated_at": (("timestamptz", None), False),
     },
+    "security_quarantine": {
+        "id": (("uuid", None), False),
+        "source_kind": (("text", None), False),
+        "source_ref": (("text", None), False),
+        "content_hash": (("char", 64), False),
+        "findings": (("jsonb", None), False),
+        "risk_score": (("integer", None), False),
+        "quarantined_at": (("timestamptz", None), False),
+        "review_state": (("text", None), False),
+        "reviewer": (("text", None), True),
+        "note": (("text", None), True),
+        "released_at": (("timestamptz", None), True),
+    },
 }
 
 PRIMARY_KEY_CONTRACTS = {
@@ -105,6 +119,7 @@ PRIMARY_KEY_CONTRACTS = {
     "collection_runs": ("id",),
     "run_slots": ("job_type", "scheduled_at_slot_kst"),
     "work_items": ("id",),
+    "security_quarantine": ("id",),
 }
 
 FOREIGN_KEY_CONTRACTS = {
@@ -114,6 +129,7 @@ FOREIGN_KEY_CONTRACTS = {
     "collection_runs": set(),
     "run_slots": {(("run_id",), "collection_runs", ("id",))},
     "work_items": set(),
+    "security_quarantine": set(),
 }
 
 UNIQUE_KEY_CONTRACTS = {
@@ -123,6 +139,7 @@ UNIQUE_KEY_CONTRACTS = {
     "collection_runs": set(),
     "run_slots": set(),
     "work_items": {("task_key",)},
+    "security_quarantine": {("source_kind", "source_ref", "content_hash")},
 }
 
 SERVER_DEFAULT_COLUMNS = {
@@ -132,6 +149,7 @@ SERVER_DEFAULT_COLUMNS = {
     "collection_runs": {"diagnostics"},
     "run_slots": set(),
     "work_items": {"id", "priority", "payload", "attempts", "created_at", "updated_at"},
+    "security_quarantine": {"quarantined_at"},
 }
 
 
@@ -515,6 +533,31 @@ def test_migration_upgrade_downgrade_upgrade_round_trip(database_url: str) -> No
         with admin_engine.connect() as connection:
             connection.exec_driver_sql(f'CREATE DATABASE "{database_name}"')
         os.environ["DATABASE_URL"] = target_url.render_as_string(hide_password=False)
+
+        command.upgrade(config, "0001_core_collection")
+        target_engine = create_engine(target_url)
+        try:
+            table_names = set(inspect(target_engine).get_table_names())
+            assert CORE_TABLES - {"security_quarantine"} <= table_names
+            assert "security_quarantine" not in table_names
+        finally:
+            target_engine.dispose()
+
+        command.upgrade(config, "0002_security_quarantine")
+        target_engine = create_engine(target_url)
+        try:
+            assert CORE_TABLES <= set(inspect(target_engine).get_table_names())
+        finally:
+            target_engine.dispose()
+
+        command.downgrade(config, "0001_core_collection")
+        target_engine = create_engine(target_url)
+        try:
+            table_names = set(inspect(target_engine).get_table_names())
+            assert CORE_TABLES - {"security_quarantine"} <= table_names
+            assert "security_quarantine" not in table_names
+        finally:
+            target_engine.dispose()
 
         command.upgrade(config, "head")
         target_engine = create_engine(target_url)
