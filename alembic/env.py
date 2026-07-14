@@ -17,11 +17,12 @@ if config.config_file_name is not None:
 
 config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"].replace("%", "%%"))
 target_metadata = Base.metadata
-_SNAPSHOT_PARENT_SCHEMA = "public"
 _SNAPSHOT_PARENT_TABLE = "post_metric_snapshots"
 
 
-def snapshot_partition_names(connection: Connection) -> frozenset[tuple[str, str]]:
+def snapshot_partition_names(
+    connection: Connection, parent_schema: str
+) -> frozenset[tuple[str, str]]:
     rows = connection.execute(
         text(
             """
@@ -40,7 +41,7 @@ def snapshot_partition_names(connection: Connection) -> frozenset[tuple[str, str
             """
         ),
         {
-            "parent_schema": _SNAPSHOT_PARENT_SCHEMA,
+            "parent_schema": parent_schema,
             "parent_table": _SNAPSHOT_PARENT_TABLE,
         },
     )
@@ -85,9 +86,11 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        default_schema_name = connection.dialect.default_schema_name
+        if not default_schema_name:
+            raise RuntimeError("database connection did not report a default schema")
         with connection.begin():
-            partition_names = snapshot_partition_names(connection)
-        default_schema_name = connection.dialect.default_schema_name or _SNAPSHOT_PARENT_SCHEMA
+            partition_names = snapshot_partition_names(connection, default_schema_name)
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

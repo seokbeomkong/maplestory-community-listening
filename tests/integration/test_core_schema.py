@@ -352,6 +352,16 @@ def test_board_kind_is_constrained(db_session: Session, kind: str) -> None:
         db_session.commit()
 
 
+@pytest.mark.parametrize("kind", ["job", "free", "info"])
+def test_every_allowed_board_kind_is_accepted(db_session: Session, kind: str) -> None:
+    saved_kind = db_session.execute(
+        text("INSERT INTO boards (id, name, kind) VALUES (999, 'valid', :kind) RETURNING kind"),
+        {"kind": kind},
+    ).scalar_one()
+
+    assert saved_kind == kind
+
+
 @pytest.mark.parametrize("status", ["pending", "complete"])
 def test_collection_run_status_is_constrained(db_session: Session, status: str) -> None:
     with pytest.raises(IntegrityError):
@@ -366,6 +376,21 @@ def test_collection_run_status_is_constrained(db_session: Session, status: str) 
         db_session.commit()
 
 
+@pytest.mark.parametrize("status", ["running", "succeeded", "partial", "failed"])
+def test_every_allowed_collection_status_is_accepted(db_session: Session, status: str) -> None:
+    saved_status = db_session.execute(
+        text(
+            "INSERT INTO collection_runs "
+            "(id, job_type, scheduled_at_slot_kst, status, config_version, started_at) "
+            "VALUES (:id, 'metadata', now(), :status, repeat('a', 64), now()) "
+            "RETURNING status"
+        ),
+        {"id": uuid4(), "status": status},
+    ).scalar_one()
+
+    assert saved_status == status
+
+
 @pytest.mark.parametrize("state", ["running", "complete"])
 def test_work_item_state_is_constrained(db_session: Session, state: str) -> None:
     with pytest.raises(IntegrityError):
@@ -377,6 +402,19 @@ def test_work_item_state_is_constrained(db_session: Session, state: str) -> None
             {"key": f"invalid:{state}", "state": state},
         )
         db_session.commit()
+
+
+@pytest.mark.parametrize("state", ["pending", "leased", "succeeded", "retry", "dead"])
+def test_every_allowed_work_state_is_accepted(db_session: Session, state: str) -> None:
+    saved_state = db_session.execute(
+        text(
+            "INSERT INTO work_items (task_key, kind, state, available_at) "
+            "VALUES (:key, 'detail_fetch', :state, now()) RETURNING state"
+        ),
+        {"key": f"valid:{state}", "state": state},
+    ).scalar_one()
+
+    assert saved_state == state
 
 
 @pytest.mark.parametrize(
@@ -411,6 +449,37 @@ def test_snapshot_metrics_cannot_be_negative(
             dict(zip(("views", "recommendations", "comments"), values, strict=True)),
         )
         db_session.commit()
+
+
+@pytest.mark.parametrize(
+    ("views", "recommendations", "comments"),
+    [(0, 1, 1), (1, 0, 1), (1, 1, 0)],
+)
+def test_each_snapshot_metric_accepts_zero_boundary(
+    db_session: Session, views: int, recommendations: int, comments: int
+) -> None:
+    db_session.execute(text("INSERT INTO boards (id, name, kind) VALUES (2294, 'warrior', 'job')"))
+    db_session.execute(
+        text(
+            "INSERT INTO posts "
+            "(board_id, post_id, analysis_unit, title, published_at, source_url) "
+            "VALUES (2294, 457159, 'hero', 'title', now(), "
+            "'https://example.invalid/457159')"
+        )
+    )
+
+    saved_metrics = db_session.execute(
+        text(
+            "INSERT INTO post_metric_snapshots "
+            "(board_id, post_id, observed_at_slot_kst, views, recommendations, comments, "
+            "config_version) VALUES "
+            "(2294, 457159, now(), :views, :recommendations, :comments, repeat('a', 64)) "
+            "RETURNING views, recommendations, comments"
+        ),
+        {"views": views, "recommendations": recommendations, "comments": comments},
+    ).one()
+
+    assert saved_metrics == (views, recommendations, comments)
 
 
 def test_work_item_defaults_and_claim_index(db_session: Session) -> None:
@@ -658,3 +727,57 @@ def test_alembic_drift_filter_excludes_only_real_snapshot_partitions(
         with db_engine.begin() as connection:
             connection.execute(text(f'DROP TABLE IF EXISTS "{archive_table}"'))
             connection.execute(text(f'DROP TABLE IF EXISTS "{runtime_partition}"'))
+
+
+def test_alembic_partition_filter_uses_non_public_default_schema(
+    database_url: str,
+    db_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema_name = f"alembic_partition_{uuid4().hex}"
+    archive_table = "post_metric_snapshots_archive"
+    runtime_partition = "snapshot_metrics_999902_partition"
+    source_url = make_url(database_url)
+    schema_url = source_url.update_query_dict({"options": f"-csearch_path={schema_name}"})
+    config = Config("alembic.ini")
+
+    with db_engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+
+    monkeypatch.setenv("DATABASE_URL", schema_url.render_as_string(hide_password=False))
+    try:
+        command.upgrade(config, "head")
+        schema_engine = create_engine(schema_url)
+        try:
+            with schema_engine.begin() as connection:
+                assert connection.dialect.default_schema_name == schema_name
+                connection.execute(text(f'CREATE TABLE "{archive_table}" (id integer PRIMARY KEY)'))
+                connection.execute(
+                    text(
+                        f'CREATE TABLE "{runtime_partition}" '
+                        "PARTITION OF post_metric_snapshots "
+                        "FOR VALUES FROM ('9999-02-01T00:00:00+09:00') "
+                        "TO ('9999-03-01T00:00:00+09:00')"
+                    )
+                )
+
+            with pytest.raises(AutogenerateDiffsDetected) as drift:
+                command.check(config)
+            removed_tables = {
+                difference[1].name
+                for difference in drift.value.diffs
+                if difference[0] == "remove_table"
+            }
+            assert archive_table in removed_tables
+            assert "post_metric_snapshots_default" not in removed_tables
+            assert runtime_partition not in removed_tables
+
+            with schema_engine.begin() as connection:
+                connection.execute(text(f'DROP TABLE "{archive_table}"'))
+
+            command.check(config)
+        finally:
+            schema_engine.dispose()
+    finally:
+        with db_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))

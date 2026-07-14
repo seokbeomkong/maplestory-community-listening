@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import parse_qsl, unquote, urlsplit
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_PATHS = [
+    _PROJECT_ROOT / "src",
+    _PROJECT_ROOT / ".venv" / "Lib" / "site-packages",
+    *(_PROJECT_ROOT / ".venv" / "lib").glob("python*/site-packages"),
+]
+_PROJECT_PATHS = [str(path) for path in _PROJECT_PATHS if path.is_dir()]
+for _project_path in _PROJECT_PATHS:
+    while _project_path in sys.path:
+        sys.path.remove(_project_path)
+sys.path[:0] = _PROJECT_PATHS
+
+from maple_monitor.db_safety import UnsafeTestDatabaseUrlError  # noqa: E402
+from maple_monitor.db_safety import validate_isolated_test_database_url  # noqa: E402
 
 
 GATES = {
@@ -19,52 +33,12 @@ GATES = {
     ],
 }
 
-_PHASE0_DATABASE_SCHEMES = {"postgresql", "postgresql+psycopg"}
-_PHASE0_DATABASE_HOSTS = {"127.0.0.1", "::1", "localhost"}
-_PHASE0_DATABASE_NAME = "maple_monitor_test"
-_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
-_DATABASE_ROUTE_QUERY_KEYS = {
-    "database",
-    "dbname",
-    "host",
-    "hostaddr",
-    "password",
-    "port",
-    "service",
-    "servicefile",
-    "user",
-}
-
 
 def _phase0_database_preflight_error(value: str | None) -> str | None:
-    error = "DATABASE_URL must target the isolated PostgreSQL test database on loopback"
-    if value is None or not value.strip():
-        return f"{error}; DATABASE_URL is missing"
-    if _INVALID_PERCENT_ESCAPE.search(value):
-        return f"{error}; DATABASE_URL is malformed"
-
     try:
-        url = urlsplit(value)
-        host = url.hostname
-        _port = url.port
-        unquote(url.username or "", errors="strict")
-        unquote(url.password or "", errors="strict")
-        database = unquote(url.path.removeprefix("/"), errors="strict")
-        query_keys = {
-            key.lower()
-            for key, _value in parse_qsl(url.query, keep_blank_values=True, errors="strict")
-        }
-    except (UnicodeError, ValueError):
-        return f"{error}; DATABASE_URL is malformed"
-
-    if (
-        url.scheme not in _PHASE0_DATABASE_SCHEMES
-        or host not in _PHASE0_DATABASE_HOSTS
-        or database != _PHASE0_DATABASE_NAME
-        or bool(url.fragment)
-        or bool(query_keys & _DATABASE_ROUTE_QUERY_KEYS)
-    ):
-        return error
+        validate_isolated_test_database_url(value)
+    except UnsafeTestDatabaseUrlError as exc:
+        return str(exc)
     return None
 
 

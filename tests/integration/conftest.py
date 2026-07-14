@@ -5,25 +5,31 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
+from maple_monitor.db_safety import UnsafeTestDatabaseUrlError
+from maple_monitor.db_safety import validate_isolated_test_database_url
+
+
+def _require_isolated_test_database_url(value: str | None) -> None:
+    try:
+        validate_isolated_test_database_url(value)
+    except UnsafeTestDatabaseUrlError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    try:
-        value = os.environ["DATABASE_URL"]
-    except KeyError:
-        pytest.fail("DATABASE_URL must point at the isolated PostgreSQL test database")
-    url = make_url(value)
-    if url.host not in {"127.0.0.1", "::1", "localhost"} or url.database != "maple_monitor_test":
-        pytest.fail("integration tests require the local maple_monitor_test database")
+    value = os.environ.get("DATABASE_URL")
+    _require_isolated_test_database_url(value)
+    assert value is not None
     return value
 
 
 @pytest.fixture(scope="session")
 def db_engine(database_url: str) -> Iterator[Engine]:
+    _require_isolated_test_database_url(database_url)
     engine = create_engine(database_url, pool_pre_ping=True)
     try:
         with engine.connect() as connection:

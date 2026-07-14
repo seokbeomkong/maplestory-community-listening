@@ -24,18 +24,71 @@ def test_phase0_runs_all_configuration_and_database_checks() -> None:
 
 
 @pytest.mark.parametrize(
-    "database_url",
+    ("database_url", "secret"),
     [
-        None,
-        "",
-        "not-a-database-url",
-        ("postgresql+psycopg://maple_monitor:%ZZ@127.0.0.1:55432/maple_monitor_test"),
-        ("postgresql+psycopg://maple_monitor:super-secret@203.0.113.10:5432/maple_monitor_test"),
-        ("postgresql+psycopg://maple_monitor:maple_monitor@127.0.0.1:55432/maple_monitor"),
-        "sqlite:///maple_monitor_test",
+        (None, None),
+        ("", None),
+        ("not-a-database-url", None),
         (
-            "postgresql+psycopg://maple_monitor:maple_monitor@127.0.0.1:55432/"
-            "maple_monitor_test?host=203.0.113.10"
+            "postgresql+psycopg://maple_monitor:malformed-percent-secret-%ZZ@"
+            "127.0.0.1:55432/maple_monitor_test",
+            "malformed-percent-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:remote-host-secret@"
+            "203.0.113.10:5432/maple_monitor_test",
+            "remote-host-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:production-name-secret@"
+            "127.0.0.1:55432/maple_monitor",
+            "production-name-secret",
+        ),
+        ("sqlite:///maple_monitor_test", None),
+        (
+            "postgresql+psycopg://maple_monitor:query-host-secret@127.0.0.1:55432/"
+            "maple_monitor_test?host=203.0.113.10",
+            "query-host-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:query-database-secret@127.0.0.1:55432/"
+            "maple_monitor_test?dbname=production",
+            "query-database-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:query-conninfo-secret@127.0.0.1:55432/"
+            "maple_monitor_test?conninfo=hostaddr%3D203.0.113.10",
+            "query-conninfo-secret",
+        ),
+        (
+            "postgresql://maple_monitor:query-dsn-secret@127.0.0.1:55432/"
+            "maple_monitor_test?dsn=hostaddr%3D203.0.113.10",
+            "query-dsn-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:encoded-database-secret@127.0.0.1:55432/"
+            "%6daple_monitor_test",
+            "encoded-database-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:fragment-secret@127.0.0.1:55432/"
+            "maple_monitor_test#",
+            "fragment-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:newline-secret@127.0.0.1:55432/"
+            "maple_monitor_\ntest",
+            "newline-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:delete-control-secret\x7f@"
+            "127.0.0.1:55432/maple_monitor_test",
+            "delete-control-secret",
+        ),
+        (
+            "postgresql+psycopg://maple_monitor:encoded-control-secret%0A@"
+            "127.0.0.1:55432/maple_monitor_test",
+            "encoded-control-secret",
         ),
     ],
     ids=[
@@ -46,11 +99,20 @@ def test_phase0_runs_all_configuration_and_database_checks() -> None:
         "remote",
         "non-test-database",
         "non-postgresql",
-        "query-route-override",
+        "query-host-route-override",
+        "query-database-route-override",
+        "query-conninfo-route-override",
+        "query-dsn-route-override",
+        "percent-encoded-database",
+        "raw-empty-fragment",
+        "internal-newline",
+        "delete-control-character",
+        "percent-encoded-control-character",
     ],
 )
 def test_phase0_rejects_unsafe_database_url_before_any_command(
     database_url: str | None,
+    secret: str | None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -75,7 +137,8 @@ def test_phase0_rejects_unsafe_database_url_before_any_command(
 
     assert exit_code == 1
     assert launched_commands == []
-    receipt = json.loads((tmp_path / ".test-receipts" / "phase0.json").read_text())
+    receipt_text = (tmp_path / ".test-receipts" / "phase0.json").read_text()
+    receipt = json.loads(receipt_text)
     assert receipt["phase"] == "phase0"
     assert receipt["passed"] is False
     assert receipt["results"] == []
@@ -84,8 +147,11 @@ def test_phase0_rejects_unsafe_database_url_before_any_command(
     output = capsys.readouterr()
     assert "FAIL phase0" in output.out
     assert receipt["error"]["message"] in output.err
-    assert "super-secret" not in json.dumps(receipt)
-    assert "super-secret" not in output.err
+    for captured in (output.out, output.err, receipt_text):
+        if database_url:
+            assert database_url not in captured
+        if secret:
+            assert secret not in captured
 
 
 @pytest.mark.parametrize(
