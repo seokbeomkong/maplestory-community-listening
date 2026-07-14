@@ -35,3 +35,13 @@ An auditable isolation state for source content suspected of carrying operationa
 ### Analysis Configuration Version
 
 The stable identity of an immutable, normalized non-secret settings snapshot that produced a collection or derived result, allowing changes to be explained and results to be recomputed.
+
+## Development Workflow
+
+### Phase Gate
+
+A verified bundle of acceptance checks that must pass before implementation expands into a later phase, leaving a durable receipt of the commands and outcomes.
+
+### Test Database Preflight
+
+A fail-closed validation that proves the effective database target remains inside the isolated local test scope before any test, migration, subprocess, engine, or connection can acquire database capability.
