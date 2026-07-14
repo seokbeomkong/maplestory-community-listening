@@ -8,9 +8,19 @@
 
 An independent job, free-board, or information-board scope within which posts are selected, ranked, and compared.
 
+### Collection Slot
+
+An aligned scheduled-time bucket that identifies one replayable collection opportunity; it keys a Metric Snapshot but does not claim when the source was actually fetched.
+
+### Source Observation Time
+
+The instant at which source state was fetched, used to order canonical metadata and record factual freshness independently of its Collection Slot or database persistence time.
+
 ### Metric Snapshot
 
-An immutable logical observation of a post's engagement counters for one scheduled collection slot, used as the factual input to later calculations.
+A configuration-pinned logical observation of a post's engagement counters for one Collection Slot, used as the factual input to later calculations.
+
+Same-configuration retries monotonically converge counters and Source Observation Time at the same identity; a different Analysis Configuration Version conflicts instead of merging.
 
 ### Cumulative Ranking
 
@@ -37,6 +47,8 @@ Security Quarantine retains source identity, risk and evidence hashes, and revie
 ### Analysis Configuration Version
 
 The stable identity of an immutable, normalized non-secret settings snapshot that produced a collection or derived result, allowing changes to be explained and results to be recomputed.
+
+Configuration versions are opaque identities: they may be compared for equality but never ordered or merged to choose provenance.
 
 ## Development Workflow
 
