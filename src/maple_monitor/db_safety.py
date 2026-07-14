@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from urllib.parse import unquote
 
 from sqlalchemy.engine import URL, make_url
@@ -25,6 +26,9 @@ _ROUTING_QUERY_KEYS = {
     "user",
 }
 _CONTRACT_ERROR = "DATABASE_URL must target the isolated PostgreSQL test database on loopback"
+_ENVIRONMENT_ERROR = (
+    "libpq environment overrides are not allowed for the isolated PostgreSQL test database"
+)
 
 
 class UnsafeTestDatabaseUrlError(ValueError):
@@ -63,4 +67,21 @@ def validate_isolated_test_database_url(value: str | None) -> URL:
     ):
         raise UnsafeTestDatabaseUrlError(_CONTRACT_ERROR)
 
+    return url
+
+
+def validate_isolated_test_database_environment(
+    value: str | None,
+    environment: Mapping[str, str],
+) -> URL:
+    """Validate the URL and reject ambient libpq connection behavior.
+
+    Every non-empty ``PG*`` variable is rejected, case-insensitively, so new or
+    internal libpq controls cannot bypass a version-sensitive denylist. This
+    test-only boundary requires a clean PostgreSQL environment; unrelated
+    non-PostgreSQL variables remain allowed.
+    """
+    url = validate_isolated_test_database_url(value)
+    if any(name.casefold().startswith("pg") and value != "" for name, value in environment.items()):
+        raise UnsafeTestDatabaseUrlError(_ENVIRONMENT_ERROR)
     return url

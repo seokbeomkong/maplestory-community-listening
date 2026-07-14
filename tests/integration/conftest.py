@@ -9,17 +9,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from maple_monitor.db_safety import UnsafeTestDatabaseUrlError
-from maple_monitor.db_safety import validate_isolated_test_database_url
+from maple_monitor.db_safety import validate_isolated_test_database_environment
 
 
 def _require_isolated_test_database_url(value: str | None) -> None:
     try:
-        validate_isolated_test_database_url(value)
+        validate_isolated_test_database_environment(value, os.environ)
     except UnsafeTestDatabaseUrlError as exc:
         pytest.fail(str(exc))
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
+def database_environment_preflight() -> None:
+    _require_isolated_test_database_url(os.environ.get("DATABASE_URL"))
+
+
+@pytest.fixture(scope="session")
 def database_url() -> str:
     value = os.environ.get("DATABASE_URL")
     _require_isolated_test_database_url(value)

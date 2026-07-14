@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,7 +22,7 @@ for _project_path in _PROJECT_PATHS:
 sys.path[:0] = _PROJECT_PATHS
 
 from maple_monitor.db_safety import UnsafeTestDatabaseUrlError  # noqa: E402
-from maple_monitor.db_safety import validate_isolated_test_database_url  # noqa: E402
+from maple_monitor.db_safety import validate_isolated_test_database_environment  # noqa: E402
 
 
 GATES = {
@@ -34,9 +35,12 @@ GATES = {
 }
 
 
-def _phase0_database_preflight_error(value: str | None) -> str | None:
+def _phase0_database_preflight_error(
+    value: str | None,
+    environment: Mapping[str, str],
+) -> str | None:
     try:
-        validate_isolated_test_database_url(value)
+        validate_isolated_test_database_environment(value, environment)
     except UnsafeTestDatabaseUrlError as exc:
         return str(exc)
     return None
@@ -68,19 +72,22 @@ def main() -> int:
         print(f"unknown gate: {phase}", file=sys.stderr)
         return 2
 
-    preflight_error = _phase0_database_preflight_error(os.environ.get("DATABASE_URL"))
-    if phase == "phase0" and preflight_error is not None:
-        receipt, output = _write_receipt(
-            phase,
-            [],
-            error={"stage": "database_preflight", "message": preflight_error},
-        )
-        print(preflight_error, file=sys.stderr)
-        print(f"FAIL {phase}; receipt={output}")
-        return 1
-
     results: list[dict[str, object]] = []
     for command in GATES[phase]:
+        preflight_error = _phase0_database_preflight_error(
+            os.environ.get("DATABASE_URL"),
+            os.environ,
+        )
+        if phase == "phase0" and preflight_error is not None:
+            receipt, output = _write_receipt(
+                phase,
+                results,
+                error={"stage": "database_preflight", "message": preflight_error},
+            )
+            print(preflight_error, file=sys.stderr)
+            print(f"FAIL {phase}; receipt={output}")
+            return 1
+
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
         results.append({"command": command, "returncode": completed.returncode})
         sys.stdout.write(completed.stdout)
