@@ -4,21 +4,21 @@
 
 Build a private, continuously updated analytics system for MapleStory Inven. The system collects public post metadata from job, free, and information-sharing boards, selects high-engagement posts over a rolling 90-day window, then analyzes their bodies, comments, and media.
 
-The system runs once per day on a Hostinger KVM 2 VPS and exposes a Streamlit dashboard only through Tailscale. It exports normalized CSV files for independent analysis.
+The system stores metadata snapshots every six hours on a Hostinger KVM 2 VPS and exposes a Streamlit dashboard only through Tailscale. It exports normalized CSV files for independent analysis.
 
 ## 2. Goals
 
 - Compare concerns, satisfaction, requests, and controversies across 48 playable jobs.
 - Identify current interests in the free board and three information-sharing boards.
 - Distinguish what authors say from how commenters react.
-- Preserve daily engagement rankings and rank-entry history.
+- Preserve six-hour metric observations, cumulative rankings, and rank-entry history.
 - Handle posts whose meaningful discussion is primarily in comments.
 - Extract useful text and context from images, GIFs, and videos without retaining full media indefinitely.
-- Keep routine crawling independent of Codex so daily collection consumes no Codex tokens.
+- Keep routine crawling independent of Codex so scheduled collection consumes no Codex tokens.
 - Fit reliably within 2 vCPU, 8 GB RAM, 100 GB NVMe, and 8 TB bandwidth.
 - Continue collecting safely while the local analysis laptop is offline, then process the accumulated backlog when it reconnects.
 - Present 24-hour, 7-day, and 30-day public-opinion trends that are useful to a MapleStory product or community team.
-- Recover from process crashes and next-day reruns without duplicate posts, comments, observations, or analysis results.
+- Recover from process crashes and later scheduled reruns without duplicate posts, comments, observations, or analysis results.
 
 ## 3. Non-goals
 
@@ -34,7 +34,7 @@ The system runs once per day on a Hostinger KVM 2 VPS and exposes a Streamlit da
 | Area | Decision |
 | --- | --- |
 | Operating model | Persistent monitoring |
-| Schedule | Once per day, Korea Standard Time |
+| Schedule | Metadata snapshots every 6 hours; daily maintenance, Korea Standard Time |
 | Ranking window | Rolling 90 days |
 | Initial backfill | 90 days |
 | Output | Private Streamlit dashboard plus CSV |
@@ -47,6 +47,7 @@ The system runs once per day on a Hostinger KVM 2 VPS and exposes a Streamlit da
 | Blocked-page fallback | Pinned `insane-search` engine, then local browser fallback |
 | Ranking rule | Separate top 50 by views, recommendations, and comments; analyze the de-duplicated union |
 | Trending weights | Recommendations 50%, comments 35%, views 15%; configurable |
+| Dashboard ranking tracks | Rolling-90-day cumulative top 50 and short-window rising posts are stored and presented separately |
 | Hot-data retention | Full analyzable content for 90 days; compact metadata and aggregates thereafter |
 
 ## 5. Source Scope
@@ -104,7 +105,7 @@ Each ranking selects 50 posts. Ties are resolved by metric descending, publicati
 
 The three top-50 sets are unioned by `(board_id, post_id)`. Each ranking membership and rank is retained even though a post's details are fetched only once. A unit therefore has between 50 and 150 deep-analysis posts.
 
-Daily observations preserve when a post enters, remains in, or exits a ranking.
+Daily ranking observations preserve when a post enters, remains in, or exits a cumulative top-50 ranking; six-hour metric observations support rising calculations independently.
 
 ## 7. Collection Architecture
 
@@ -113,7 +114,7 @@ flowchart LR
     subgraph VPS["VPS collection and serving layer"]
         A[System scheduler] --> B[List metadata collector]
         B --> C[PostgreSQL and compressed payload queue]
-        C --> D[90-day rankings and trending metrics]
+        C --> D[90-day cumulative top-50 rankings]
         D --> E[Deep-fetch queue]
         E --> F[HTTP then insane-search then local browser]
         F --> C
@@ -121,7 +122,8 @@ flowchart LR
     end
 
     subgraph LOCAL["Laptop preprocessing layer"]
-        G[Backlog sync over Tailscale] --> H[Cleaning, OCR, embeddings, clustering]
+        G[Backlog sync over Tailscale] --> H[Cleaning, metric deltas, OCR, embeddings, clustering]
+        H --> R[Rising-post and category scores]
         H --> I[Compact analysis packages]
     end
 
@@ -130,12 +132,13 @@ flowchart LR
     end
 
     C -->|claim bounded batches| G
+    R -->|validated rising-score upserts| C
     J -->|validated idempotent results| C
 ```
 
 The layers are asynchronous. The VPS never waits for the laptop in order to collect. When the laptop is offline, compressed processing tasks accumulate in PostgreSQL and bounded payload storage. When the laptop reconnects through Tailscale, it claims the oldest eligible batches, processes them, optionally sends compact uncertain cases to Codex, validates the structured results, and returns them to the VPS.
 
-The dashboard continues to show current metadata and engagement trends while local analysis is behind. Sentiment and topic panels display an explicit `analysis_fresh_through` timestamp and backlog count so stale analysis cannot be mistaken for current opinion.
+The dashboard continues to show current metadata and cumulative rankings while local analysis is behind. Rising, sentiment, and topic panels display explicit freshness timestamps and backlog counts so stale analysis cannot be mistaken for current opinion.
 
 ### 7.1 Services
 
@@ -145,7 +148,7 @@ The VPS Docker Compose stack separates the following services:
 - `queue-api`: Tailscale-only batch claim, payload download, result upload, and acknowledgement
 - `postgres`: metadata, observations, content, and analysis results
 - `dashboard`: Streamlit application and CSV export
-- `scheduler`: daily, weekly, and monthly jobs
+- `scheduler`: six-hour metadata snapshots plus daily, weekly, and monthly maintenance jobs
 
 Tailscale runs on the VPS host. PostgreSQL and Streamlit are not exposed to the public internet.
 
@@ -153,7 +156,7 @@ The Windows laptop runs a separate local worker outside the VPS stack. Windows T
 
 ### 7.2 Resource boundaries
 
-The VPS performs only network collection, minimal deterministic parsing, durable storage, ranking and trend calculation, and private dashboard serving. OCR, embeddings, topic clustering, large text transforms, and Codex calls never run on the VPS.
+The VPS performs only network collection, minimal deterministic parsing, durable storage, cumulative ranking, and private dashboard serving. Rising-score calculation, OCR, embeddings, topic clustering, large text transforms, and Codex calls never run on the VPS.
 
 Default KVM 2 operating limits are:
 
@@ -166,13 +169,27 @@ Default KVM 2 operating limits are:
 
 The VPS application stack has a 5.5 GB normal-operation guardrail. The limits are deployment defaults and are verified under real load before enabling the full backfill. PostgreSQL tables with time-series data use monthly partitions, compressed payloads, narrow indexes, and scheduled vacuum/analyze. The collector pauses deep media work when memory, disk, or load thresholds are exceeded; list metadata collection has priority.
 
-The local worker claims 50-100 oldest eligible posts per batch over the Tailscale-only queue API. It acknowledges a batch only after local output passes schema validation and the VPS commits the results. If the laptop is off, collection and metadata trends remain current while the processing backlog grows within the retention limits.
+The local worker claims 50-100 oldest eligible posts per batch over the Tailscale-only queue API. It acknowledges a batch only after local output passes schema validation and the VPS commits the results. If the laptop is off, collection and cumulative rankings remain current while rising and text-analysis backlogs grow within the retention limits.
+
+### 7.3 Operator-managed configuration
+
+Non-secret operating variables live in a version-controlled `config/settings.yaml`, while passwords, service credentials, and connection strings remain in `.env` files excluded from Git. The operator can change the following without editing application code or rebuilding an image:
+
+- metadata collection interval, default `6h`
+- rolling ranking window and cumulative top-N, defaults `90d` and `50`
+- rising windows, defaults `24h`, `7d`, and `30d`
+- recommendation, comment, and view weights, defaults `0.50`, `0.35`, and `0.15`
+- acceleration weight, minimum sample size, and category aggregation size
+- request delay, concurrency, retry limits, local batch size, and Codex token/session budgets
+- hot-data retention and disk/memory pause thresholds within deployment safety bounds
+
+Configuration is validated on startup and reload. Invalid values fail closed and leave the last valid configuration active. Every collection run, ranking snapshot, rising-score row, and analysis result stores a `config_version` derived from the normalized configuration hash so results remain reproducible after settings change. The dashboard shows the active values and their last reload status; the first release keeps configuration editing file-based to minimize attack surface and implementation complexity.
 
 ## 8. Token and Runtime Optimization
 
 ### 8.1 Codex usage boundary
 
-Routine crawling is performed by ordinary Python and browser processes on the VPS. The daily scheduler does not start a Codex task, Codex CLI session, or Codex automation. Codex is used on the laptop for software work and bounded text-analysis batches only when the laptop is on.
+Routine crawling is performed by ordinary Python and browser processes on the VPS. The six-hour scheduler does not start a Codex task, Codex CLI session, or Codex automation. Codex is used on the laptop for software work and bounded text-analysis batches only when the laptop is on.
 
 Consequently:
 
@@ -204,10 +221,10 @@ Only the de-duplicated ranking union enters the second pass for body, complete c
 
 ### 8.3 Incremental refresh tiers
 
-- Daily: new list pages, posts aged 0-7 days, active ranking members, and near-cutoff candidates
+- Every 6 hours: new list pages, posts aged 0-7 days, active ranking members, near-cutoff candidates, and metric snapshots needed for rising calculations
 - Weekly: posts aged 8-30 days
 - Monthly: posts aged 31-90 days
-- Free-board recommendation feeds: daily, to detect late popularity spikes
+- Free-board recommendation feeds: every 6 hours, to detect late popularity spikes
 
 The collector stops list pagination as soon as it reaches the last known post during incremental runs or passes the 90-day cutoff during backfill.
 
@@ -223,6 +240,7 @@ Laptop-local processing handles:
 - duplicate and near-duplicate detection
 - OCR
 - engagement calculations
+- 6-hour metric-snapshot deltas and rising-score calculation
 - representative-comment selection
 
 Codex analysis is limited to:
@@ -257,7 +275,7 @@ Deep-selected posts store:
 - title and category
 - publication and modification observations
 - cleaned body text and content hash
-- daily views, recommendations, and comment count
+- six-hour and daily-aggregate views, recommendations, and comment counts
 - deletion, hiding, and access state
 - complete comment hierarchy
 - comment text, time, author pseudonym, author-is-post-writer flag, likes, and dislikes
@@ -308,6 +326,7 @@ Media processing occurs only for deep-selected posts.
 | `jobs` | Stable job and job-group mappings |
 | `posts` | Canonical post identity and current state |
 | `post_versions` | Body and title change history |
+| `post_metric_snapshots` | Six-hour VPS observations of views, recommendations, and comment counts |
 | `post_metrics_daily` | Daily views, recommendations, and comment counts |
 | `ranking_observations` | Metric, unit, rank, and observation date |
 | `feed_observations` | Free-board recommendation-feed membership |
@@ -315,14 +334,17 @@ Media processing occurs only for deep-selected posts.
 | `comment_metrics` | Comment likes and dislikes over time |
 | `media_assets` | Media metadata and derived analysis |
 | `analysis_labels` | Topic, sentiment, emotion, target, stance, confidence, and model version |
-| `trend_scores` | Post, topic, job, and board trend components by 24-hour, 7-day, and 30-day window |
+| `cumulative_top_posts` | Separate rolling-90-day top-50 membership and rank for views, recommendations, and comments |
+| `rising_post_scores` | Separate post-level 24-hour, 7-day, and 30-day delta, acceleration, score, sample, config, and freshness fields |
+| `rising_category_scores` | Rising topic, job, and board-category scores derived from `rising_post_scores` |
 | `opinion_aggregates_daily` | Daily topic and sentiment aggregates retained after source text expires |
 | `collection_runs` | Run status and aggregate diagnostics |
 | `collection_pages` | Page checkpoints, validation, retry, and error state |
-| `run_slots` | One deterministic scheduled slot per job type and KST date |
+| `run_slots` | One deterministic scheduled slot per job type and aligned KST execution time |
 | `work_items` | Durable collection and local-analysis queue with state, attempts, lease, and priority |
 | `raw_payloads` | Content-addressed compressed diagnostic and processing payload references |
 | `analysis_results` | Validated idempotent local and Codex outputs with full version identity |
+| `security_quarantine` | Suspicious-content rule hits, hashes, review state, and audited release decisions |
 
 Source HTML is compressed and retained for 30 days for parser diagnostics. Full normalized body and comment text is hot data with bounded retention; metadata, metric observations, hashes, rankings, and aggregates are the long-term record.
 
@@ -355,7 +377,9 @@ Raw engagement and age-normalized engagement are displayed together so older pos
 
 ### Trending and rising-interest score
 
-Trending uses metric deltas, not lifetime totals. The system calculates independent 24-hour, 7-day, and 30-day windows. For each post and window it calculates positive changes in recommendations, comments, and views from the nearest valid observations at the window boundaries.
+Rising posts are not mixed into `cumulative_top_posts`. The VPS only collects and stores source metadata snapshots every six hours. The laptop reads those immutable observations, calculates independent 24-hour, 7-day, and 30-day changes, and upserts the resulting features into `rising_post_scores`; category aggregates go to `rising_category_scores`. The source observations remain sufficient to recompute scores after a weight or algorithm change without re-crawling.
+
+For each post and window, the local worker calculates positive changes in recommendations, comments, and views from the nearest valid observations at the window boundaries. A score is emitted only when boundary coverage is within the configured tolerance; otherwise the row is marked `insufficient_history` rather than treating missing time as zero growth.
 
 Because the three metrics have different scales, each delta is transformed with `log1p` and converted to a robust percentile within a comparable analysis unit and time window. The default engagement intensity is:
 
@@ -378,7 +402,7 @@ rising_score =
 
 Topic, job, and board-category trend scores combine the mean of the five strongest post scores with the share of posts above the unit's 90th percentile. A category needs at least three contributing posts to receive a normal-confidence label; smaller samples remain visible with a low-sample warning. This prevents one viral post from being presented as broad opinion.
 
-The dashboard shows both the composite score and its recommendation, comment, view, and acceleration components. Analysts can change the weights and immediately recalculate historical windows without re-crawling or rerunning Codex.
+The dashboard shows both the composite score and its recommendation, comment, view, and acceleration components. Analysts can change the configuration and have the laptop recalculate historical windows without re-crawling or rerunning Codex. Until that recalculation is uploaded, the prior score remains visible with its `config_version` and a recomputation-pending badge.
 
 ### Public-opinion interpretation
 
@@ -396,6 +420,8 @@ The executive view is designed as an internal MapleStory decision-support surfac
 
 The Tailscale-only Streamlit dashboard contains:
 
+- separate navigation for `누적 상위 50` and `급상승`, with no blended ranking
+- cumulative top-50 views for each analysis unit and each of views, recommendations, and comments over the rolling 90-day window
 - an internal opinion pulse with 24-hour, 7-day, and 30-day selectors
 - fastest-rising jobs, topics, and board categories using the configurable recommendation/comment/view weights
 - positive, negative, and neutral reaction shares beside popularity, never merged into a single approval score
@@ -414,15 +440,20 @@ Reader-facing excerpts remain short and link to the source page. Full source pos
 
 Every trend card exposes recommendation, comment, view, and acceleration components, contributing-post count, sentiment sample size, confidence, and source period. If local text processing is behind, engagement cards remain current but sentiment panels show a prominent stale-analysis badge and do not silently carry old sentiment into the current window.
 
+The cumulative view remains available whenever VPS collection is current. The rising view displays `rising_fresh_through`, the last processed six-hour snapshot, pending snapshot count, and configuration version. If the laptop is off, it shows the last valid rising result as stale rather than calculating a partial score on the VPS.
+
 ## 15. CSV Outputs
 
 - `posts.csv`
+- `post_metric_snapshots.csv`
 - `post_metrics_daily.csv`
 - `ranking_observations.csv`
+- `cumulative_top_posts.csv`
 - `comments.csv`
 - `media_analysis.csv`
 - `analysis_labels.csv`
-- `trend_scores.csv`
+- `rising_post_scores.csv`
+- `rising_category_scores.csv`
 - `topic_daily.csv`
 - `opinion_daily.csv`
 - `collection_health.csv`, including partial runs, backlog, retries, and expiry warnings
@@ -441,6 +472,16 @@ All CSV files are UTF-8 with a BOM when intended for direct Korean Excel use. Da
 - Raw HTML and previews have bounded retention.
 - Database backups are encrypted or stored in an access-controlled location.
 
+### 16.1 Untrusted-content and prompt-injection quarantine
+
+Every title, body, comment, OCR result, caption, filename, and linked-page excerpt is attacker-controlled data. It is never interpreted as an operator instruction, configuration, command, tool request, or permission change. Crawled text cannot modify `.env`, `config/settings.yaml`, prompts, model selection, budgets, URLs, or queue state.
+
+Before local preprocessing or Codex batching, a deterministic scanner normalizes Unicode and detects control or invisible characters, instruction-override phrases, secret or environment requests, shell or tool-use requests, prompt or system-message impersonation, encoded instruction blocks, and suspicious link or attachment patterns. Findings receive rule IDs, evidence hashes, and a risk score. Content above the configured threshold is written to `security_quarantine`, excluded from all text analysis, embeddings, summaries, representative excerpts, and LLM inputs, and reported on a Tailscale-only security panel. Canonical post metadata and source URL remain so the event is auditable.
+
+Quarantine records contain post or comment identity, detection time, rule IDs, risk score, escaped short evidence, review status, and reviewer note. The operator may mark a false positive and release it through an audited action; release creates a new processing task rather than editing history. Dashboard rendering always escapes source text and never renders source HTML. Attachments are never executed, and fetching is restricted to approved Inven and explicitly allow-listed media hosts to reduce SSRF risk.
+
+Safe content sent to Codex is de-identified, delimited as untrusted data, tool-free, and schema-constrained. The Codex analysis boundary receives no secrets, environment variables, filesystem-write capability, shell capability, browser capability, or queue credentials. A model response can only propose versioned analysis labels; deterministic validation and the VPS transaction decide whether to accept them.
+
 ## 17. Error Handling
 
 The system provides at-least-once task delivery with idempotent writes. Repeating a request or replaying yesterday's interrupted run may repeat work, but must not create a second logical post, comment, observation, ranking, or analysis result.
@@ -451,9 +492,10 @@ Database constraints enforce these identities:
 
 - post: `(board_id, post_id)`
 - comment: `(board_id, post_id, source_comment_id)` when the site exposes a stable ID; otherwise a deterministic fingerprint of reply parent, normalized author token, timestamp, and normalized text
-- daily metric: `(board_id, post_id, observed_date_kst)`
+- metric snapshot: `(board_id, post_id, observed_at_slot_kst)`
+- daily aggregate: `(board_id, post_id, observed_date_kst)`
 - ranking observation: `(analysis_unit_id, metric, window_end_date_kst, post_id)`
-- scheduled run: `(job_type, scheduled_date_kst)`
+- scheduled run: `(job_type, scheduled_at_slot_kst)`
 - analysis result: `(content_hash, preprocessing_version, prompt_version, model_version)`
 
 Collectors use UPSERTs that replace only fields from an equal or newer observation. A PostgreSQL advisory lock permits one active collector for a job type. Starting the scheduler twice therefore creates or resumes the same run slot instead of launching competing full runs.
@@ -464,15 +506,15 @@ Every collection, deep-fetch, and local-analysis task has a deterministic key an
 
 Page checkpoints advance only in the same transaction that commits all validated rows from that page. Raw payloads are written to a temporary `.part` object, verified by SHA-256, atomically renamed, and then referenced from the database. Downstream work items are created through a transactional outbox so a committed post cannot be silently omitted from deep-fetch or analysis.
 
-At the next daily start, the scheduler performs recovery in this order:
+At the next scheduled start, the scheduler performs recovery in this order:
 
 1. obtain the advisory lock and open the deterministic KST run slot
 2. requeue expired leases and unfinished tasks from prior slots
-3. collect today's newest list pages so current monitoring is not blocked by old backlog
+3. collect the current slot's newest list pages so current monitoring is not blocked by old backlog
 4. process prior retry work within a fixed time and resource budget
 5. close the run as `succeeded`, `partial`, or `failed` with counts by board and error class
 
-This order allows the new day to progress without discarding the interrupted day. Unique constraints and UPSERTs make overlap harmless.
+This order allows the current slot to progress without discarding an interrupted prior slot. Unique constraints and UPSERTs make overlap harmless.
 
 ### 17.3 Validation, retries, and reconciliation
 
@@ -512,31 +554,33 @@ The dashboard shows the oldest unprocessed date and projected expiry so an analy
 - A post present in multiple rankings is deep-fetched once.
 - Threads above 100 comments load all public segments and replies.
 - Empty-body, comment-led, deleted, image-only, GIF, video-only, and inaccessible-media fixtures pass.
-- Daily data freshness remains within 30 hours.
+- Metadata freshness remains within eight hours during normal operation.
 - Deep-selected body and comment completeness reaches at least 98%, excluding terminally unavailable sources.
 - Normal operation remains below 6 GB RAM on KVM 2.
-- Daily collection can run with LLM disabled and with zero Codex usage.
+- Scheduled collection can run with LLM disabled and with zero Codex usage.
 - Formula and aggregation checks reconcile dashboard totals with PostgreSQL queries.
 - Killing a collector after page fetch, row commit, payload write, and task claim respectively produces no duplicates or lost committed work after restart.
-- A next-day run safely resumes an interrupted prior run while still collecting current-day metadata.
-- Concurrent scheduler starts resolve to one active run per job type and KST date.
+- A later six-hour run safely resumes an interrupted prior slot while still collecting current-slot metadata.
+- Concurrent scheduler starts resolve to one active run per job type and aligned KST slot.
 - A simulated seven-day laptop outage accumulates a bounded backlog; reconnecting processes it oldest-first without blocking VPS collection.
 - The 24-hour, 7-day, and 30-day trend scores reproduce fixture calculations and preserve the configured order of recommendation, comment, and view influence.
 - Trend weights are validated as non-negative and normalized to sum to one before recalculation.
+- Cumulative top-50 rows and rising rows are stored in separate tables and displayed in separate dashboard sections.
+- Malicious-instruction fixtures are quarantined before preprocessing, never enter Codex input, and appear in the private security report with escaped evidence.
+- Invalid configuration reloads preserve the last valid settings; valid interval or weight changes create a new `config_version` and deterministic recalculation.
 - Stale text analysis is visually distinguishable from current engagement data.
 - A 91-day retention dry run deletes hot source text and previews while preserving metadata, rankings, metrics, labels, and daily aggregates.
 
 ## 20. Rollout
 
-1. Build parsers and fixtures for one job group, the free board, and one information board.
-2. Validate metadata fields, 100-comment loading, and ranking on a bounded sample.
-3. Enable all five job groups and three information boards.
-4. Run the 90-day metadata backfill in resumable batches.
-5. Calculate rankings and deep-fetch the de-duplicated union.
-6. Enable local NLP with LLM disabled.
-7. Validate dashboard and CSV against source samples.
-8. Enable limited LLM analysis with explicit daily budgets.
-9. Run crash-point, duplicate-scheduler, seven-day laptop-off, catch-up, and 91-day retention simulations.
-10. Enable the daily scheduler and review the first seven runs, including partial-run recovery and resource use.
+1. Build the smallest runnable skeleton: validated operator configuration, database migration, health check, and one fixture-driven parser. Proceed only after configuration and migration tests pass.
+2. Complete one-board vertical slice: six-hour metadata snapshot, idempotent storage, cumulative top-50 query, and minimal dashboard table. Proceed only after parser, duplicate-run, database, and dashboard smoke tests pass.
+3. Add all source registries, rolling-90-day backfill, exclusions, and cumulative rankings. Proceed only after live-sample reconciliation and deterministic ranking tests pass.
+4. Add deep body, all-comment, and media collection together with the prompt-injection quarantine. Proceed only after 100-comment, empty-body, malicious-content, escaping, SSRF allow-list, and replay tests pass.
+5. Add the laptop backlog worker, metric-delta preprocessing, separate rising tables, and 24-hour, 7-day, and 30-day dashboard views. Proceed only after laptop-off catch-up, boundary-gap, weight-change, and stale-result tests pass.
+6. Add deterministic local opinion analysis first, then opt-in bounded Codex batches for safe low-confidence cases. Proceed only after schema, de-identification, quarantine-exclusion, cache, token-budget, and import-replay tests pass.
+7. Add CSV exports, cleanup, backups, resource guards, Tailscale deployment, and operations reports. Proceed only after crash-point, duplicate-scheduler, 91-day retention, restore, resource, and end-to-end tests pass.
+
+Each phase ends in a small commit and a recorded test receipt. A failed gate stops progression; the failure is fixed at that phase before later features are added. This keeps debugging scope and Codex context small while producing usable software as early as phase 2.
 
 The initial backfill is intentionally governed by site-friendly rate limits, so elapsed time is secondary to completeness and respectful access. It runs as an ordinary VPS process and does not consume Codex tokens while unattended.
