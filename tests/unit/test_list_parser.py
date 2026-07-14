@@ -171,6 +171,52 @@ def test_rejects_noncanonical_or_spoofed_article_hrefs(href: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "href",
+    [
+        "/board/maple/2294/900010?token=relative-query-do-not-leak",
+        ("https://www.inven.co.kr/board/maple/2294/900010?token=absolute-query-do-not-leak"),
+    ],
+)
+def test_rejects_article_hrefs_with_queries_without_echoing_them(href: str) -> None:
+    with pytest.raises(InvalidSourcePage) as caught:
+        parse_list_page(
+            2294,
+            _page(rows=(_article_row(href=href),)),
+            FETCHED_AT,
+        )
+
+    assert type(caught.value) is InvalidSourcePage
+    assert str(caught.value) == "article URL is invalid"
+    assert "do-not-leak" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "/board/maple/2294/900010?",
+        "https://www.inven.co.kr/board/maple/2294/900010?",
+        "/board/maple/2294/900010#",
+        "https://www.inven.co.kr/board/maple/2294/900010#",
+        "/board/maple/2294/900010#token=relative-fragment-do-not-leak",
+        ("https://www.inven.co.kr/board/maple/2294/900010#token=absolute-fragment-do-not-leak"),
+    ],
+)
+def test_rejects_even_empty_query_or_fragment_delimiters(href: str) -> None:
+    with pytest.raises(InvalidSourcePage) as caught:
+        parse_list_page(
+            2294,
+            _page(rows=(_article_row(href=href),)),
+            FETCHED_AT,
+        )
+
+    assert type(caught.value) is InvalidSourcePage
+    assert str(caught.value) == "article URL is invalid"
+    assert "do-not-leak" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
     "headers",
     [
         ("번호", "제목", "글쓴이", "등록일", "조회"),

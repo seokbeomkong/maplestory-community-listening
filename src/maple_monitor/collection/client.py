@@ -104,8 +104,8 @@ def fetch_list_page(board_id: int, *, client: httpx.Client | None = None) -> byt
                     raise ListPageResponseError("list page response target is invalid")
                 if response.is_redirect:
                     raise ListPageRedirectError("list page request was redirected")
-                if not response.is_success:
-                    raise ListPageResponseError("list page request was unsuccessful")
+                if response.status_code != httpx.codes.OK or "content-range" in response.headers:
+                    raise ListPageResponseError("list page response is incomplete")
                 return _read_bounded(response)
     except httpx.HTTPError:
         raise ListPageTransportError("list page request failed") from None

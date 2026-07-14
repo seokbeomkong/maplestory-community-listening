@@ -27,7 +27,7 @@ def upsert_post(
     session: Session,
     item: PostListItem,
     *,
-    observed_at_slot_kst: datetime,
+    observed_at_actual: datetime,
 ) -> bool:
     """Insert or monotonically refresh a canonical post; return whether inserted."""
 
@@ -41,7 +41,7 @@ def upsert_post(
         "is_notice": item.is_notice,
         "is_ad": item.is_ad,
         "current_category": item.category,
-        "last_seen_at": observed_at_slot_kst,
+        "last_seen_at": observed_at_actual,
     }
     inserted_post_id = session.execute(
         insert(Post)
@@ -76,9 +76,9 @@ def upsert_post(
             Post.board_id == item.board_id,
             Post.post_id == item.post_id,
             or_(
-                Post.last_seen_at < observed_at_slot_kst,
+                Post.last_seen_at < observed_at_actual,
                 and_(
-                    Post.last_seen_at == observed_at_slot_kst,
+                    Post.last_seen_at == observed_at_actual,
                     existing_rank < candidate_rank,
                 ),
             ),
@@ -91,7 +91,7 @@ def upsert_post(
             is_notice=item.is_notice,
             is_ad=item.is_ad,
             current_category=item.category,
-            last_seen_at=observed_at_slot_kst,
+            last_seen_at=observed_at_actual,
         )
     )
     return False

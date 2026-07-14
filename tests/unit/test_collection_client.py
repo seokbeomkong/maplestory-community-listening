@@ -124,6 +124,40 @@ def test_redacts_non_success_response_body() -> None:
     assert "503" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("status_code", "headers"),
+    [
+        (206, {}),
+        (200, {"content-range": "bytes 0-20/secret-total-do-not-leak"}),
+    ],
+)
+def test_rejects_partial_response_semantics_with_a_stable_redacted_failure(
+    status_code: int,
+    headers: dict[str, str],
+) -> None:
+    from maple_monitor.collection.client import ListPageResponseError, fetch_list_page
+
+    leaked_body = "<html>valid-looking token=partial-body-do-not-leak</html>"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code,
+            headers=headers,
+            text=leaked_body,
+            request=request,
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ListPageResponseError) as caught:
+            fetch_list_page(2294, client=client)
+
+    assert type(caught.value) is ListPageResponseError
+    assert str(caught.value) == "list page response is incomplete"
+    assert leaked_body not in str(caught.value)
+    assert "secret-total-do-not-leak" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
 def test_rejects_declared_response_above_the_byte_cap() -> None:
     from maple_monitor.collection.client import (
         MAX_LIST_RESPONSE_BYTES,

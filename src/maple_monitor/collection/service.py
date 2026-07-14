@@ -240,7 +240,7 @@ def collect_board_slot(
         if upsert_post(
             session,
             item,
-            observed_at_slot_kst=canonical_slot,
+            observed_at_actual=actual_fetch_time,
         ):
             inserted += 1
         else:

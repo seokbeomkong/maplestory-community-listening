@@ -106,7 +106,7 @@ def _article_identity(raw_href: object, expected_board: int) -> tuple[int, str]:
         port = parsed.port
     except (UnicodeError, ValueError):
         raise InvalidSourcePage("article URL is invalid") from None
-    if parsed.fragment:
+    if "?" in raw_href or "#" in raw_href:
         raise InvalidSourcePage("article URL is invalid")
     if parsed.scheme or parsed.netloc:
         if (

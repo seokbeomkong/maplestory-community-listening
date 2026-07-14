@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -141,6 +142,27 @@ def _preseed_post_without_snapshot(db_engine: Engine, post_id: int) -> None:
         session.commit()
 
 
+def _preseed_refreshable_post_without_snapshot(db_engine: Engine, post_id: int) -> None:
+    preseed_fetch = datetime(2026, 7, 14, 6, 22, tzinfo=KST)
+    with Session(db_engine) as session:
+        _collect(
+            session,
+            [_item(post_id, title="0 temporary preseed", published_at=SLOT)],
+            fetched_at=preseed_fetch,
+        )
+        session.commit()
+    with Session(db_engine) as session:
+        session.execute(
+            text(
+                "DELETE FROM post_metric_snapshots "
+                "WHERE board_id = :board_id AND post_id = :post_id "
+                "AND observed_at_slot_kst = :slot"
+            ),
+            {"board_id": 2294, "post_id": post_id, "slot": SLOT},
+        )
+        session.commit()
+
+
 def _install_snapshot_overlap_barrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Event, Event]:
@@ -163,6 +185,72 @@ def _install_snapshot_overlap_barrier(
 
     monkeypatch.setattr(collection_service, "upsert_snapshot", synchronized_upsert_snapshot)
     return both_reached_snapshot, release_snapshot_writes
+
+
+def _install_locked_post_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    first_fetch: datetime,
+) -> tuple[Event, Event, Event]:
+    import maple_monitor.collection.service as collection_service
+
+    real_upsert_post = collection_service.upsert_post
+    first_post_updated = Event()
+    second_post_started = Event()
+    release_first_transaction = Event()
+
+    def locked_upsert_post(
+        session: Session,
+        item: PostListItem,
+        *,
+        observed_at_actual: datetime,
+    ) -> bool:
+        if observed_at_actual == first_fetch:
+            result = real_upsert_post(
+                session,
+                item,
+                observed_at_actual=observed_at_actual,
+            )
+            first_post_updated.set()
+            assert release_first_transaction.wait(timeout=10)
+            return result
+
+        second_post_started.set()
+        return real_upsert_post(
+            session,
+            item,
+            observed_at_actual=observed_at_actual,
+        )
+
+    monkeypatch.setattr(collection_service, "upsert_post", locked_upsert_post)
+    return first_post_updated, second_post_started, release_first_transaction
+
+
+def _wait_until_backend_is_blocked_by(
+    db_engine: Engine,
+    *,
+    blocked_pid: int,
+    blocking_pid: int,
+) -> None:
+    deadline = monotonic() + 10
+    with Session(db_engine) as inspection:
+        while monotonic() < deadline:
+            row = inspection.execute(
+                text(
+                    "SELECT state, wait_event_type, pg_blocking_pids(pid) AS blockers "
+                    "FROM pg_stat_activity WHERE pid = :pid"
+                ),
+                {"pid": blocked_pid},
+            ).one_or_none()
+            if (
+                row is not None
+                and row.state == "active"
+                and row.wait_event_type == "Lock"
+                and blocking_pid in row.blockers
+            ):
+                return
+            sleep(0.01)
+    pytest.fail("second Post upsert did not block on the first transaction")
 
 
 def test_committed_post_cleanup_preserves_a_preexisting_empty_board(
@@ -247,7 +335,7 @@ def test_same_slot_replay_keeps_one_snapshot_at_the_highest_counters(
     assert snapshot == (1, 105, 3, 4)
     assert post.title == "수정 제목"
     assert post.current_category == "히어로"
-    assert post.last_seen_at == SLOT
+    assert post.last_seen_at == FETCHED_AT
     assert board == ("전사", "job")
 
 
@@ -289,6 +377,84 @@ def test_same_config_replays_merge_counters_and_actual_fetch_time_monotonically(
     assert rows == [
         (910002, 150, 5, 4, later),
         (910003, 150, 5, 4, later),
+    ]
+
+
+def test_post_metadata_uses_latest_actual_observation_in_both_sequential_orders(
+    db_session: Session,
+) -> None:
+    earlier_fetch = datetime(2026, 7, 14, 6, 24, tzinfo=KST)
+    later_fetch = datetime(2026, 7, 14, 6, 29, tzinfo=KST)
+    published_at = datetime(2026, 7, 14, 6, 0, tzinfo=KST)
+
+    earlier = _item(910005, title="Zulu stale title", published_at=published_at)
+    later = replace(
+        _item(910005, title="Alpha latest title", published_at=published_at),
+        is_notice=True,
+    )
+    earlier_reversed = replace(
+        earlier,
+        post_id=910006,
+        source_url="https://www.inven.co.kr/board/maple/2294/910006",
+    )
+    later_reversed = replace(
+        later,
+        post_id=910006,
+        source_url="https://www.inven.co.kr/board/maple/2294/910006",
+    )
+
+    _collect(db_session, [later], fetched_at=later_fetch)
+    _collect(db_session, [earlier], fetched_at=earlier_fetch)
+    _collect(db_session, [earlier_reversed], fetched_at=earlier_fetch)
+    _collect(db_session, [later_reversed], fetched_at=later_fetch)
+
+    rows = db_session.execute(
+        text(
+            "SELECT post_id, title, published_at, is_notice, last_seen_at "
+            "FROM posts WHERE board_id = :board_id "
+            "AND post_id IN (:first, :second) ORDER BY post_id"
+        ),
+        {"board_id": 2294, "first": 910005, "second": 910006},
+    ).all()
+    assert rows == [
+        (910005, "Alpha latest title", published_at, True, later_fetch),
+        (910006, "Alpha latest title", published_at, True, later_fetch),
+    ]
+
+
+def test_post_metadata_exact_actual_time_ties_use_deterministic_rank(
+    db_session: Session,
+) -> None:
+    published_at = datetime(2026, 7, 14, 6, 0, tzinfo=KST)
+    lower = _item(910007, title="Alpha title", published_at=published_at)
+    higher = _item(910007, title="Zulu title", published_at=published_at)
+    lower_reversed = replace(
+        lower,
+        post_id=910008,
+        source_url="https://www.inven.co.kr/board/maple/2294/910008",
+    )
+    higher_reversed = replace(
+        higher,
+        post_id=910008,
+        source_url="https://www.inven.co.kr/board/maple/2294/910008",
+    )
+
+    _collect(db_session, [higher], fetched_at=FETCHED_AT)
+    _collect(db_session, [lower], fetched_at=FETCHED_AT)
+    _collect(db_session, [lower_reversed], fetched_at=FETCHED_AT)
+    _collect(db_session, [higher_reversed], fetched_at=FETCHED_AT)
+
+    rows = db_session.execute(
+        text(
+            "SELECT post_id, title, last_seen_at FROM posts "
+            "WHERE board_id = :board_id "
+            "AND post_id IN (:first, :second) ORDER BY post_id"
+        ),
+        {"board_id": 2294, "first": 910007, "second": 910008},
+    ).all()
+    assert rows == [
+        (910007, "Zulu title", FETCHED_AT),
+        (910008, "Zulu title", FETCHED_AT),
     ]
 
 
@@ -467,7 +633,7 @@ def test_rejects_invalid_board_slot_or_config_before_writing(
     )
 
 
-def test_older_slot_replay_cannot_replace_newer_canonical_post_fields(
+def test_schedule_slot_does_not_override_exact_actual_time_metadata_rank(
     db_session: Session,
 ) -> None:
     newer_slot = datetime(2026, 7, 14, 12, 20, tzinfo=KST)
@@ -492,7 +658,7 @@ def test_older_slot_replay_cannot_replace_newer_canonical_post_fields(
         ),
         {"board_id": 2294, "post_id": 910040},
     ).all()
-    assert post == ("최신 제목", newer_slot, newer_slot)
+    assert post == ("최신 제목", newer_slot, FETCHED_AT)
     assert snapshots == [(SLOT, 100), (newer_slot, 200)]
 
 
@@ -1138,6 +1304,118 @@ def test_concurrent_same_slot_collectors_converge_on_one_monotonic_snapshot(
     finally:
         if release_snapshot_writes is not None:
             release_snapshot_writes.set()
+        _remove_persisted_post(
+            db_engine,
+            post_id,
+            remove_orphaned_board=not board_preexisting,
+        )
+
+
+@pytest.mark.parametrize(
+    ("post_id", "first_is_later"),
+    [(910061, False), (910062, True)],
+)
+def test_concurrent_post_upserts_recheck_actual_time_after_a_row_lock_wait(
+    db_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    post_id: int,
+    first_is_later: bool,
+) -> None:
+    earlier_fetch = datetime(2026, 7, 14, 6, 24, tzinfo=KST)
+    later_fetch = datetime(2026, 7, 14, 6, 29, tzinfo=KST)
+    published_at = datetime(2026, 7, 14, 6, 0, tzinfo=KST)
+    earlier_observation = (
+        _item(post_id, title="Zulu stale title", published_at=published_at),
+        earlier_fetch,
+    )
+    later_observation = (
+        replace(
+            _item(post_id, title="Alpha latest title", published_at=published_at),
+            is_notice=True,
+        ),
+        later_fetch,
+    )
+    first_observation, second_observation = (
+        (later_observation, earlier_observation)
+        if first_is_later
+        else (earlier_observation, later_observation)
+    )
+    backend_pids: dict[str, int] = {}
+    backend_pid_ready = {"first": Event(), "second": Event()}
+
+    def collect_observation(
+        label: str,
+        item: PostListItem,
+        fetched_at: datetime,
+    ) -> CollectionSummary:
+        with Session(db_engine) as session:
+            backend_pids[label] = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            backend_pid_ready[label].set()
+            summary = _collect(session, [item], fetched_at=fetched_at)
+            session.commit()
+            return summary
+
+    board_preexisting = _board_exists(db_engine)
+    release_first_transaction: Event | None = None
+    try:
+        _remove_persisted_post(db_engine, post_id)
+        _preseed_refreshable_post_without_snapshot(db_engine, post_id)
+        (
+            first_post_updated,
+            second_post_started,
+            release_first_transaction,
+        ) = _install_locked_post_overlap(
+            monkeypatch,
+            first_fetch=first_observation[1],
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(
+                collect_observation,
+                "first",
+                *first_observation,
+            )
+            second_future = None
+            try:
+                assert backend_pid_ready["first"].wait(timeout=10)
+                assert first_post_updated.wait(timeout=10)
+                second_future = executor.submit(
+                    collect_observation,
+                    "second",
+                    *second_observation,
+                )
+                assert backend_pid_ready["second"].wait(timeout=10)
+                assert second_post_started.wait(timeout=10)
+                assert backend_pids["first"] != backend_pids["second"]
+                _wait_until_backend_is_blocked_by(
+                    db_engine,
+                    blocked_pid=backend_pids["second"],
+                    blocking_pid=backend_pids["first"],
+                )
+            finally:
+                release_first_transaction.set()
+
+            assert second_future is not None
+            summaries = [
+                first_future.result(timeout=20),
+                second_future.result(timeout=20),
+            ]
+
+        with Session(db_engine) as verification:
+            row = verification.execute(
+                text(
+                    "SELECT title, published_at, is_notice, last_seen_at "
+                    "FROM posts WHERE board_id = :board_id AND post_id = :post_id"
+                ),
+                {"board_id": 2294, "post_id": post_id},
+            ).one()
+        assert summaries == [
+            CollectionSummary(0, 1, 0, 0),
+            CollectionSummary(0, 1, 0, 0),
+        ]
+        assert row == ("Alpha latest title", published_at, True, later_fetch)
+    finally:
+        if release_first_transaction is not None:
+            release_first_transaction.set()
         _remove_persisted_post(
             db_engine,
             post_id,
