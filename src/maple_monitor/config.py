@@ -41,10 +41,10 @@ class NormalizedWeights(StrictModel):
 
 
 class RisingSettings(StrictModel):
-    windows_hours: list[int] = Field(min_length=1)
-    recommendation_weight: float = Field(ge=0)
-    comment_weight: float = Field(ge=0)
-    view_weight: float = Field(ge=0)
+    windows_hours: tuple[int, ...] = Field(min_length=1)
+    recommendation_weight: float = Field(ge=0, allow_inf_nan=False)
+    comment_weight: float = Field(ge=0, allow_inf_nan=False)
+    view_weight: float = Field(ge=0, allow_inf_nan=False)
     acceleration_weight: float = Field(ge=0, le=1)
     boundary_tolerance_hours: int = Field(ge=0, le=12)
     category_top_k: int = Field(ge=1, le=20)
@@ -57,18 +57,22 @@ class RisingSettings(StrictModel):
             raise ValueError("rising windows must be positive")
         if len(set(self.windows_hours)) != len(self.windows_hours):
             raise ValueError("rising windows must be unique")
-        if self.recommendation_weight + self.comment_weight + self.view_weight <= 0:
+        if max(self.recommendation_weight, self.comment_weight, self.view_weight) <= 0:
             raise ValueError("at least one rising weight must be positive")
         return self
 
     def normalized_weights(self) -> NormalizedWeights:
-        total = self.recommendation_weight + self.comment_weight + self.view_weight
-        if total <= 0:
+        scale = max(self.recommendation_weight, self.comment_weight, self.view_weight)
+        if scale <= 0:
             raise ValueError("at least one rising weight must be positive")
+        recommendation = self.recommendation_weight / scale
+        comment = self.comment_weight / scale
+        view = self.view_weight / scale
+        total = recommendation + comment + view
         return NormalizedWeights(
-            recommendation=self.recommendation_weight / total,
-            comment=self.comment_weight / total,
-            view=self.view_weight / total,
+            recommendation=recommendation / total,
+            comment=comment / total,
+            view=view / total,
         )
 
 

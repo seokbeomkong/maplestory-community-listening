@@ -1,8 +1,9 @@
+import math
 from pathlib import Path
 
 import pytest
 
-from maple_monitor.config import load_settings
+from maple_monitor.config import SettingsStore, load_settings
 
 
 def test_defaults_are_operator_visible_and_weights_normalize(tmp_path: Path) -> None:
@@ -69,8 +70,6 @@ def test_interval_must_divide_day(tmp_path: Path) -> None:
 
 
 def test_invalid_reload_does_not_replace_last_valid_configuration(tmp_path: Path) -> None:
-    from maple_monitor.config import SettingsStore
-
     path = tmp_path / "settings.yaml"
     path.write_text(Path("config/settings.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     store = SettingsStore(path)
@@ -80,3 +79,47 @@ def test_invalid_reload_does_not_replace_last_valid_configuration(tmp_path: Path
     assert store.reload() is False
     assert store.current.config_version == first.config_version
     assert store.last_error is not None
+
+
+def test_large_finite_weights_normalize_to_finite_unit_sum(tmp_path: Path) -> None:
+    source = Path("config/settings.yaml").read_text(encoding="utf-8")
+    path = tmp_path / "large-weights.yaml"
+    path.write_text(
+        source.replace("recommendation_weight: 50", "recommendation_weight: 1e308")
+        .replace("comment_weight: 35", "comment_weight: 1e308")
+        .replace("view_weight: 15", "view_weight: 0"),
+        encoding="utf-8",
+    )
+
+    weights = load_settings(path).settings.rising.normalized_weights().model_dump().values()
+
+    assert all(math.isfinite(weight) for weight in weights)
+    assert sum(weights) == pytest.approx(1.0)
+
+
+def test_non_finite_weight_reload_preserves_last_valid_configuration(tmp_path: Path) -> None:
+    source = Path("config/settings.yaml").read_text(encoding="utf-8")
+    path = tmp_path / "settings.yaml"
+    path.write_text(source, encoding="utf-8")
+    store = SettingsStore(path)
+    first = store.current
+    path.write_text(
+        source.replace("recommendation_weight: 50", "recommendation_weight: .inf"),
+        encoding="utf-8",
+    )
+
+    assert store.reload() is False
+    assert store.current is first
+    assert store.last_error is not None
+
+
+def test_loaded_settings_windows_cannot_be_mutated_in_place() -> None:
+    loaded = load_settings(Path("config/settings.yaml"))
+    windows = loaded.settings.rising.windows_hours
+    original_version = loaded.config_version
+
+    with pytest.raises(AttributeError):
+        windows.append(-1)
+
+    assert windows == (24, 168, 720)
+    assert loaded.config_version == original_version
