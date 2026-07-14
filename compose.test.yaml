@@ -1,0 +1,19 @@
+name: maple-inven-monitor-test
+
+services:
+  postgres:
+    image: postgres:16.8-alpine
+    environment:
+      POSTGRES_DB: maple_monitor_test
+      POSTGRES_PASSWORD: maple_monitor
+      POSTGRES_USER: maple_monitor
+      TZ: Asia/Seoul
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maple_monitor -d maple_monitor_test"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data

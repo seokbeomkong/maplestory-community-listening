@@ -11,6 +11,8 @@ GATES = {
     "phase0": [
         ["uv", "run", "ruff", "check", "."],
         ["uv", "run", "pytest", "tests/unit/test_config.py", "-q"],
+        ["uv", "run", "alembic", "upgrade", "head"],
+        ["uv", "run", "pytest", "tests/integration/test_core_schema.py", "-q"],
     ],
 }
 
