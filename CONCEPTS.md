@@ -32,6 +32,8 @@ The latest source observation fully reflected in a derived result, used to disti
 
 An auditable isolation state for source content suspected of carrying operational instructions or unsafe payloads, preventing semantic processing until an authorized release.
 
+Security Quarantine retains source identity, risk and evidence hashes, and review state rather than the source text. Release preserves the quarantine history with immutable reviewer context and creates one new analysis work item; it does not erase the record or directly authorize model execution.
+
 ### Analysis Configuration Version
 
 The stable identity of an immutable, normalized non-secret settings snapshot that produced a collection or derived result, allowing changes to be explained and results to be recomputed.
