@@ -51,6 +51,38 @@ def _run_powershell(*arguments: str, env: dict[str, str] | None = None) -> subpr
     )
 
 
+def _run_powershell_with_compress_failure(
+    output_root: Path,
+    *,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    environment = env.copy()
+    environment["TEST_EXPORT_WRAPPER"] = str(POWERSHELL_WRAPPER)
+    environment["TEST_EXPORT_OUTPUT_ROOT"] = str(output_root)
+    command = (
+        "& { "
+        "function global:Compress-Archive { throw 'injected Compress-Archive failure' }; "
+        "& $env:TEST_EXPORT_WRAPPER -OutputRoot $env:TEST_EXPORT_OUTPUT_ROOT "
+        "}"
+    )
+    return subprocess.run(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _write_release(
     root: Path,
     *,
@@ -92,21 +124,50 @@ def _fake_ssh_environment(
     command_dir.mkdir()
     ssh_marker = root / "ssh-called.txt"
     scp_marker = root / "scp-called.txt"
+    prune_marker = root / "prune-called.txt"
+    event_log = root / "command-events.txt"
+    ssh_helper = root / "fake_ssh.py"
     scp_helper = root / "fake_scp.py"
+    ssh_helper.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "import shutil\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "Path(os.environ['FAKE_SSH_MARKER']).write_text('called', encoding='ascii')\n"
+        "event = 'prune' if '--prune' in args else 'export'\n"
+        "with Path(os.environ['FAKE_EVENT_LOG']).open('a', encoding='ascii') as stream:\n"
+        "    stream.write(event + '\\n')\n"
+        "if event == 'prune':\n"
+        "    Path(os.environ['FAKE_PRUNE_MARKER']).write_text(' '.join(args), encoding='utf-8')\n"
+        "    if os.environ.get('FAKE_REQUIRE_TEMP_ZIP') == '1':\n"
+        "        output_root = Path(os.environ['FAKE_OUTPUT_ROOT'])\n"
+        "        if not list(output_root.glob('*.partial.zip')):\n"
+        "            raise SystemExit(94)\n"
+        "    retention_root = os.environ.get('FAKE_REMOTE_RETENTION_ROOT')\n"
+        "    if retention_root:\n"
+        "        releases = sorted((item for item in Path(retention_root).iterdir() if item.is_dir()), reverse=True)\n"
+        "        for expired in releases[3:]:\n"
+        "            shutil.rmtree(expired)\n"
+        "    raise SystemExit(int(os.environ.get('FAKE_PRUNE_EXIT', '0')))\n"
+        "print(os.environ['FAKE_REMOTE_PATH'])\n",
+        encoding="utf-8",
+    )
     scp_helper.write_text(
         "from pathlib import Path\n"
         "import os\n"
         "import shutil\n"
         "import sys\n"
         "Path(os.environ['FAKE_SCP_MARKER']).write_text('called', encoding='ascii')\n"
+        "with Path(os.environ['FAKE_EVENT_LOG']).open('a', encoding='ascii') as stream:\n"
+        "    stream.write('scp\\n')\n"
         "shutil.copytree(Path(os.environ['FAKE_RELEASE_DIR']), Path(sys.argv[-1]))\n",
         encoding="utf-8",
     )
     (command_dir / "ssh.cmd").write_text(
         "@echo off\r\n"
-        "> \"%FAKE_SSH_MARKER%\" echo called\r\n"
-        "echo %FAKE_REMOTE_PATH%\r\n"
-        "exit /b 0\r\n",
+        "\"%FAKE_PYTHON%\" \"%FAKE_SSH_HELPER%\" %*\r\n"
+        "exit /b %ERRORLEVEL%\r\n",
         encoding="ascii",
     )
     (command_dir / "scp.cmd").write_text(
@@ -121,11 +182,14 @@ def _fake_ssh_environment(
         {
             "PATH": str(command_dir),
             "FAKE_PYTHON": sys.executable,
+            "FAKE_SSH_HELPER": str(ssh_helper),
             "FAKE_SCP_HELPER": str(scp_helper),
             "FAKE_RELEASE_DIR": str(release),
             "FAKE_REMOTE_PATH": remote_path,
             "FAKE_SSH_MARKER": str(ssh_marker),
             "FAKE_SCP_MARKER": str(scp_marker),
+            "FAKE_PRUNE_MARKER": str(prune_marker),
+            "FAKE_EVENT_LOG": str(event_log),
         }
     )
     return environment, ssh_marker, scp_marker
@@ -144,8 +208,18 @@ def test_bash_helper_has_atomic_read_only_export_contract() -> None:
     assert "trap cleanup EXIT" in script
     assert "exports/releases" in script or '"$EXPORT_ROOT/releases"' in script
     assert "exec -T postgres" in script
+    assert script.count("exec psql") == 1
+    assert script.count("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;") == 1
+    assert script.count("COMMIT;") == 1
     assert script.count("COPY (") == 4
     assert "TO STDOUT WITH (FORMAT CSV, HEADER TRUE)" in script
+    transaction_start = script.index("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;")
+    transaction_end = script.index("COMMIT;")
+    assert transaction_start < script.index("COPY (")
+    assert transaction_end > script.rindex("COPY (")
+    assert "container_temp_dir" in script
+    assert script.count("\\o $container_temp_dir/") == 4
+    assert 'cp "postgres:$container_temp_dir/$csv_file"' in script
     assert "sha256sum" in script
     assert "SHA256SUMS.txt" in script
     assert 'mv -T -- "$staging_dir" "$release_dir"' in script
@@ -162,6 +236,23 @@ def test_bash_helper_has_atomic_read_only_export_contract() -> None:
     assert "--env-file \"$deploy_root/.env.production\"" in lowered
     assert not re.search(r"(?:cat|source|\.)\s+[^\n]*\.env\.production", lowered)
     assert not re.search(r"docker\s+compose[^\n]*(?:\bup\b|\bdown\b|\brestart\b)", lowered)
+
+
+def test_bash_helper_prune_mode_is_bounded_and_path_confined() -> None:
+    script = BASH_HELPER.read_text(encoding="utf-8")
+
+    assert 'readonly RELEASE_KEEP_COUNT=3' in script
+    assert 'readonly LEASE_ROOT="$EXPORT_ROOT/inflight"' in script
+    assert "--prune" in script
+    assert "flock -x" in script
+    assert "RELEASE_NAME_PATTERN" in script
+    assert 'readlink "$EXPORT_ROOT/latest-download"' in script
+    assert 'rm -rf -- "$candidate_path"' in script
+    assert script.index('rm -f -- "$LEASE_ROOT/$current_name"') > script.index(
+        'rm -rf -- "$candidate_path"'
+    )
+    assert 'rm -rf -- "$RELEASE_ROOT"' not in script
+    assert 'rm -rf -- "$EXPORT_ROOT"' not in script
 
 
 def test_bash_helper_is_tracked_as_executable() -> None:
@@ -240,6 +331,20 @@ def test_fake_commands_complete_verified_download_and_zip_without_touching_old_e
     (old_folder / "sentinel.txt").write_text("preserve me", encoding="utf-8")
     old_zip = output_root / "production-20260714-010203.zip"
     old_zip.write_bytes(b"preserve this zip")
+    remote_retention_root = tmp_path / "remote-releases"
+    remote_retention_root.mkdir()
+    remote_release_names = [
+        "20260715-120000-abcd1234",
+        "20260715-060000-bbbb2222",
+        "20260715-000000-cccc3333",
+        "20260714-180000-dddd4444",
+        "20260714-120000-eeee5555",
+    ]
+    for release_name in remote_release_names:
+        (remote_retention_root / release_name).mkdir()
+    environment["FAKE_OUTPUT_ROOT"] = str(output_root)
+    environment["FAKE_REQUIRE_TEMP_ZIP"] = "1"
+    environment["FAKE_REMOTE_RETENTION_ROOT"] = str(remote_retention_root)
 
     result = _run_powershell("-OutputRoot", str(output_root), env=environment)
 
@@ -260,6 +365,14 @@ def test_fake_commands_complete_verified_download_and_zip_without_touching_old_e
     assert (old_folder / "sentinel.txt").read_text(encoding="utf-8") == "preserve me"
     assert old_zip.read_bytes() == b"preserve this zip"
     assert _partial_directories(output_root) == []
+    prune_call = Path(environment["FAKE_PRUNE_MARKER"]).read_text(encoding="utf-8")
+    assert "--prune" in prune_call
+    assert environment["FAKE_REMOTE_PATH"] in prune_call
+    events = Path(environment["FAKE_EVENT_LOG"]).read_text(encoding="ascii").splitlines()
+    assert events == ["export", "scp", "prune"]
+    assert {item.name for item in remote_retention_root.iterdir()} == set(
+        remote_release_names[:3]
+    )
 
 
 def test_rejected_remote_path_never_invokes_scp(tmp_path: Path) -> None:
@@ -293,6 +406,47 @@ def test_checksum_mismatch_removes_partial_and_never_creates_zip(tmp_path: Path)
     assert scp_marker.exists()
     assert _partial_directories(output_root) == []
     assert list(output_root.glob("production-*")) == []
+    assert not Path(environment["FAKE_PRUNE_MARKER"]).exists()
+
+
+def test_prune_failure_after_archive_preparation_publishes_nothing(tmp_path: Path) -> None:
+    release = _write_release(tmp_path)
+    environment, _ssh_marker, scp_marker = _fake_ssh_environment(tmp_path, release)
+    output_root = tmp_path / "exports"
+    environment["FAKE_OUTPUT_ROOT"] = str(output_root)
+    environment["FAKE_REQUIRE_TEMP_ZIP"] = "1"
+    environment["FAKE_PRUNE_EXIT"] = "93"
+
+    result = _run_powershell("-OutputRoot", str(output_root), env=environment)
+
+    assert result.returncode != 0
+    assert "remote release pruning failed with exit code 93" in result.stderr
+    assert scp_marker.exists()
+    assert Path(environment["FAKE_PRUNE_MARKER"]).exists()
+    events = Path(environment["FAKE_EVENT_LOG"]).read_text(encoding="ascii").splitlines()
+    assert events == ["export", "scp", "prune"]
+    assert list(output_root.glob("production-*")) == []
+    assert _partial_directories(output_root) == []
+    assert list(output_root.glob("*.partial.zip")) == []
+
+
+def test_compress_archive_failure_cleans_every_current_run_artifact(tmp_path: Path) -> None:
+    release = _write_release(tmp_path)
+    environment, _ssh_marker, scp_marker = _fake_ssh_environment(tmp_path, release)
+    output_root = tmp_path / "exports"
+
+    result = _run_powershell_with_compress_failure(
+        output_root,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "injected Compress-Archive failure" in result.stderr
+    assert scp_marker.exists()
+    assert not Path(environment["FAKE_PRUNE_MARKER"]).exists()
+    assert list(output_root.glob("production-*")) == []
+    assert _partial_directories(output_root) == []
+    assert list(output_root.glob("*.partial.zip")) == []
 
 
 @pytest.mark.parametrize(

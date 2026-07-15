@@ -58,8 +58,12 @@ if ((Test-Path -LiteralPath $finalPath) -or (Test-Path -LiteralPath $zipPath)) {
     throw "Export destination already exists: $destinationName"
 }
 
-$partialName = ".$destinationName-$([Guid]::NewGuid().ToString('N')).partial"
+$runId = [Guid]::NewGuid().ToString("N")
+$partialName = ".$destinationName-$runId.partial"
 $partialPath = Join-Path $resolvedOutputRoot $partialName
+$temporaryZipPath = Join-Path $resolvedOutputRoot ".$destinationName-$runId.partial.zip"
+$finalFolderOwned = $false
+$finalZipOwned = $false
 
 try {
     $sshArguments = @(
@@ -132,18 +136,67 @@ try {
         }
     }
 
-    if ((Test-Path -LiteralPath $finalPath) -or (Test-Path -LiteralPath $zipPath)) {
+    if (
+        (Test-Path -LiteralPath $finalPath) -or
+        (Test-Path -LiteralPath $zipPath) -or
+        (Test-Path -LiteralPath $temporaryZipPath)
+    ) {
         throw "Export destination already exists: $destinationName"
     }
+
+    $compressArguments = @{
+        Path = Join-Path $partialPath "*"
+        DestinationPath = $temporaryZipPath
+        CompressionLevel = "Optimal"
+    }
+    Compress-Archive @compressArguments
+    if (-not (Test-Path -LiteralPath $temporaryZipPath -PathType Leaf)) {
+        throw "ZIP preparation did not create the temporary archive."
+    }
+
+    $pruneArguments = @(
+        "-o", "BatchMode=yes",
+        "-o", "NumberOfPasswordPrompts=0",
+        "-o", "ConnectTimeout=15",
+        "--",
+        $SshHost,
+        $remoteHelper,
+        "--prune",
+        $remoteReleasePath
+    )
+    $pruneOutput = @(& $sshCommand.Source @pruneArguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "The remote release pruning failed with exit code $LASTEXITCODE."
+    }
+    $unexpectedPruneOutput = @(
+        $pruneOutput |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { $_.Length -gt 0 }
+    )
+    if ($unexpectedPruneOutput.Count -ne 0) {
+        throw "The remote prune helper returned unexpected output."
+    }
+
     Rename-Item -LiteralPath $partialPath -NewName $destinationName
     $partialPath = $null
-
-    Compress-Archive -Path (Join-Path $finalPath "*") -DestinationPath $zipPath -CompressionLevel Optimal
+    $finalFolderOwned = $true
+    Move-Item -LiteralPath $temporaryZipPath -Destination $zipPath
+    $temporaryZipPath = $null
+    $finalZipOwned = $true
 
     Write-Output $finalPath
     Write-Output $zipPath
 }
 catch {
+    if ($finalZipOwned -and (Test-Path -LiteralPath $zipPath)) {
+        Remove-Item -LiteralPath $zipPath -Force
+    }
+    if ($finalFolderOwned -and (Test-Path -LiteralPath $finalPath)) {
+        Remove-Item -LiteralPath $finalPath -Recurse -Force
+    }
+    if ($null -ne $temporaryZipPath -and (Test-Path -LiteralPath $temporaryZipPath)) {
+        Remove-Item -LiteralPath $temporaryZipPath -Force
+    }
     if ($null -ne $partialPath -and (Test-Path -LiteralPath $partialPath)) {
         Remove-Item -LiteralPath $partialPath -Recurse -Force
     }

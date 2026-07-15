@@ -91,9 +91,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/download-production-
 
 The command creates a timestamped folder and matching ZIP under
 `C:\Users\tjrqj\Documents\Maplestory\exports`. It exports the current production data with
-read-only queries, verifies every CSV checksum before creating the ZIP, and consumes no Codex
-tokens. The laptop needs to be online only while the command is running and downloading the
-files; scheduled collection on the VPS continues independently afterward.
+one repeatable-read, read-only PostgreSQL snapshot, verifies every CSV checksum, and prepares the
+ZIP before publishing the final folder and ZIP names. After the verified archive is ready, the
+VPS keeps the three most recent completed export releases; releases still being transferred are
+temporarily protected from pruning. A failed checksum, ZIP, or prune step leaves no new
+production-named artifact on the laptop and does not touch an earlier download. The command
+consumes no Codex tokens. The laptop needs to be online only while the command is running and
+downloading the files; scheduled collection on the VPS continues independently afterward.
 
 ## 6. Operations
 
