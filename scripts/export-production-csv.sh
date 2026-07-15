@@ -12,14 +12,15 @@ readonly CSV_FILES=(
 )
 
 staging_dir=""
+latest_work_dir=""
 latest_temp=""
 
 cleanup() {
   if [[ -n "$staging_dir" && -d "$staging_dir" ]]; then
     rm -rf -- "$staging_dir"
   fi
-  if [[ -n "$latest_temp" && -L "$latest_temp" ]]; then
-    rm -f -- "$latest_temp"
+  if [[ -n "$latest_work_dir" && -d "$latest_work_dir" ]]; then
+    rm -rf -- "$latest_work_dir"
   fi
 }
 trap cleanup EXIT
@@ -138,12 +139,19 @@ SQL
   sha256sum "${CSV_FILES[@]}" >SHA256SUMS.txt
 )
 
-mv -- "$staging_dir" "$release_dir"
+if [[ -e "$release_dir" || -L "$release_dir" ]]; then
+  printf 'release destination already exists\n' >&2
+  exit 1
+fi
+mv -T -- "$staging_dir" "$release_dir"
 staging_dir=""
 
-latest_temp="$EXPORT_ROOT/.latest-download-${random_suffix}"
+latest_work_dir="$(mktemp -d "$EXPORT_ROOT/.latest-download-${random_suffix}-XXXXXXXX")"
+latest_temp="$latest_work_dir/latest-download"
 ln -s -- "$release_dir" "$latest_temp"
 mv -Tf -- "$latest_temp" "$EXPORT_ROOT/latest-download"
 latest_temp=""
+rmdir -- "$latest_work_dir"
+latest_work_dir=""
 
 printf '%s\n' "$release_dir"
