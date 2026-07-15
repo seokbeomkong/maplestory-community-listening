@@ -42,11 +42,13 @@ if ($PlanOnly) {
     exit 0
 }
 
-$sshCommand = Get-Command ssh -CommandType Application -ErrorAction SilentlyContinue
+$sshCommand = Get-Command ssh -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
 if ($null -eq $sshCommand) {
     throw "The ssh command was not found. Install or enable the Windows OpenSSH client."
 }
-$scpCommand = Get-Command scp -CommandType Application -ErrorAction SilentlyContinue
+$scpCommand = Get-Command scp -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
 if ($null -eq $scpCommand) {
     throw "The scp command was not found. Install or enable the Windows OpenSSH client."
 }

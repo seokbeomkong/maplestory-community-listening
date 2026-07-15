@@ -318,3 +318,41 @@ def test_non_exact_release_files_fail_and_remove_partial(
     assert scp_marker.exists()
     assert _partial_directories(output_root) == []
     assert list(output_root.glob("production-*")) == []
+
+
+def test_multiple_ssh_and_scp_applications_invoke_only_the_first_path_match(
+    tmp_path: Path,
+) -> None:
+    release = _write_release(tmp_path)
+    environment, first_ssh_marker, first_scp_marker = _fake_ssh_environment(
+        tmp_path,
+        release,
+    )
+    second_command_dir = tmp_path / "second-commands"
+    second_command_dir.mkdir()
+    second_ssh_marker = tmp_path / "second-ssh-called.txt"
+    second_scp_marker = tmp_path / "second-scp-called.txt"
+    (second_command_dir / "ssh.cmd").write_text(
+        "@echo off\r\n"
+        "> \"%FAKE_SECOND_SSH_MARKER%\" echo called\r\n"
+        "exit /b 91\r\n",
+        encoding="ascii",
+    )
+    (second_command_dir / "scp.cmd").write_text(
+        "@echo off\r\n"
+        "> \"%FAKE_SECOND_SCP_MARKER%\" echo called\r\n"
+        "exit /b 92\r\n",
+        encoding="ascii",
+    )
+    environment["PATH"] = environment["PATH"] + os.pathsep + str(second_command_dir)
+    environment["FAKE_SECOND_SSH_MARKER"] = str(second_ssh_marker)
+    environment["FAKE_SECOND_SCP_MARKER"] = str(second_scp_marker)
+    output_root = tmp_path / "exports"
+
+    result = _run_powershell("-OutputRoot", str(output_root), env=environment)
+
+    assert result.returncode == 0, result.stderr
+    assert first_ssh_marker.exists()
+    assert first_scp_marker.exists()
+    assert not second_ssh_marker.exists()
+    assert not second_scp_marker.exists()
