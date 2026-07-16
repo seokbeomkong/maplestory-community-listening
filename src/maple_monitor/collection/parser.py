@@ -14,6 +14,7 @@ from maple_monitor.sources import SourceDefinition, analysis_unit_for, source_fo
 
 
 MAX_LIST_PAGE_BYTES: Final = 512_000
+MAX_SOURCE_PAGE: Final = 100_000
 SUPPORTED_CATEGORY: Final = "히어로"
 CANONICAL_HOST: Final = "www.inven.co.kr"
 KST: Final = ZoneInfo("Asia/Seoul")
@@ -38,6 +39,7 @@ _ARTICLE_PATH = re.compile(r"/board/maple/(?P<board>[0-9]+)/(?P<post>[0-9]+)\Z")
 _CATEGORY_MARKER = re.compile(r"\[(?P<category>[^][\r\n]+)]\Z")
 _COMMENT_MARKER = re.compile(r"\[(?P<count>(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+))]\Z")
 _INTEGER = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\Z")
+_SOURCE_PAGE = re.compile(r"[0-9]+\Z")
 _NOTICE_CLASSES: Final = frozenset({"notice", "notice-row"})
 _AD_CLASSES: Final = frozenset({"ad", "ad-row", "advertisement"})
 class InvalidSourcePage(ValueError):
@@ -101,7 +103,13 @@ def _article_identity(raw_href: object, expected_board: int) -> tuple[int, str]:
         except (UnicodeError, ValueError):
             raise InvalidSourcePage("article URL is invalid") from None
         if query != [("category", SUPPORTED_CATEGORY)]:
-            raise InvalidSourcePage("article URL is invalid")
+            if (
+                len(query) != 1
+                or query[0][0] != "p"
+                or _SOURCE_PAGE.fullmatch(query[0][1]) is None
+                or not 1 <= int(query[0][1]) <= MAX_SOURCE_PAGE
+            ):
+                raise InvalidSourcePage("article URL is invalid")
     if parsed.scheme or parsed.netloc:
         if (
             parsed.scheme != "https"

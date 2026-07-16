@@ -193,6 +193,64 @@ def test_accepts_only_the_hero_source_filter_and_canonicalizes_it(href: str) -> 
 @pytest.mark.parametrize(
     "href",
     [
+        "/board/maple/2294/900010?p=1",
+        "/board/maple/2294/900010?p=100000",
+        "https://www.inven.co.kr/board/maple/2294/900010?p=1",
+        "https://www.inven.co.kr/board/maple/2294/900010?p=100000",
+    ],
+)
+def test_accepts_a_single_bounded_source_page_query_and_canonicalizes_it(href: str) -> None:
+    item = parse_list_page(
+        2294,
+        _page(rows=(_article_row(href=href),)),
+        FETCHED_AT,
+    )[0]
+
+    assert item.post_id == 900010
+    assert item.source_url == "https://www.inven.co.kr/board/maple/2294/900010"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "p=0",
+        "p=-1",
+        "p=1.5",
+        "p=page-two",
+        "p=100001",
+        "p=2&p=2",
+        "p=2&category=hero",
+        "category=hero&p=2",
+    ],
+)
+def test_rejects_invalid_or_ambiguous_source_page_queries(query: str) -> None:
+    with pytest.raises(InvalidSourcePage, match="article URL is invalid"):
+        parse_list_page(
+            2294,
+            _page(rows=(_article_row(href=f"/board/maple/2294/900010?{query}"),)),
+            FETCHED_AT,
+        )
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "/board/maple/2294/900010?p=2#page",
+        "https://www.inven.co.kr/board/maple/2294/900010?p=2#page",
+    ],
+)
+def test_rejects_source_page_queries_with_fragments(href: str) -> None:
+    with pytest.raises(InvalidSourcePage, match="article URL is invalid"):
+        parse_list_page(
+            2294,
+            _page(rows=(_article_row(href=href),)),
+            FETCHED_AT,
+        )
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
         "/board/maple/2294/900010?token=relative-query-do-not-leak",
         ("https://www.inven.co.kr/board/maple/2294/900010?token=absolute-query-do-not-leak"),
         "/board/maple/2294/900010?category=히어로&token=extra-do-not-leak",
