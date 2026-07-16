@@ -95,6 +95,8 @@ export_snapshot() {
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 \o $container_temp_dir/latest_post_metrics.csv
 COPY (
+  -- Every stored board is in scope; the lateral query selects the latest row
+  -- independently for each composite (board_id, post_id) key.
   SELECT
     p.board_id,
     b.name AS board_name,
@@ -123,6 +125,7 @@ COPY (
 ) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
 \o $container_temp_dir/cumulative_top50.csv
 COPY (
+  -- Rankings span every analysis unit and board; there is no source predicate.
   SELECT
     ranking.analysis_unit,
     ranking.metric,

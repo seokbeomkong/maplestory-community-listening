@@ -238,6 +238,32 @@ def test_bash_helper_has_atomic_read_only_export_contract() -> None:
     assert not re.search(r"docker\s+compose[^\n]*(?:\bup\b|\bdown\b|\brestart\b)", lowered)
 
 
+def test_bash_helper_exports_all_sources_at_each_posts_latest_snapshot() -> None:
+    script = BASH_HELPER.read_text(encoding="utf-8")
+    lowered = script.casefold()
+
+    assert "join boards as b on b.id = p.board_id" in lowered
+    assert "where snapshot.board_id = p.board_id and snapshot.post_id = p.post_id" in lowered
+    assert "order by snapshot.observed_at_slot_kst desc" in lowered
+    assert "limit 1" in lowered
+    assert "join posts" in lowered
+    assert "posts.board_id = ranking.board_id and posts.post_id = ranking.post_id" in lowered
+    assert "p.board_id = 2294" not in lowered
+    assert "ranking.board_id = 2294" not in lowered
+    assert "analysis_unit = 'hero'" not in lowered
+
+
+def test_bash_helper_exports_metadata_and_diagnostics_without_raw_content() -> None:
+    script = BASH_HELPER.read_text(encoding="utf-8")
+    lowered = script.casefold()
+
+    assert "collection_runs.csv" in lowered
+    assert "diagnostics" in lowered
+    assert "metrics.comments" in lowered
+    for prohibited_column in ("raw_html", "body_text", "comment_text", "post_body"):
+        assert prohibited_column not in lowered
+
+
 def test_bash_helper_prune_mode_is_bounded_and_path_confined() -> None:
     script = BASH_HELPER.read_text(encoding="utf-8")
 
