@@ -1,6 +1,7 @@
 ---
 title: "Harden Maple Inven Collector Source and Replay Semantics"
 date: 2026-07-14
+last_updated: 2026-07-16
 category: integration-issues
 module: maple_inven_monitoring
 problem_type: integration_issue
@@ -33,7 +34,9 @@ tags:
 
 ## Problem
 
-The one-board collector initially agreed with its own synthetic fixtures but not with the public Maple Inven Hero board or the database semantics needed for replay. It could silently accept incomplete or structurally ambiguous input, attach counters to the wrong title semantics, and produce metadata or provenance that depended on retry order rather than the observation itself.
+The collector initially agreed with its own synthetic fixtures but not with the public Maple Inven source pages or the database semantics needed for replay. It could silently accept incomplete or structurally ambiguous input, attach counters to the wrong title semantics, and produce metadata or provenance that depended on retry order rather than the observation itself.
+
+When the pilot expanded from one Hero source to a static eight-source registry, a second contract error appeared: the category parser reused a layout-text normalizer that collapsed internal whitespace, even though category metadata allowed only Unicode NFKC normalization plus surrounding trim. Sample-only registry tests also left most source definitions and job-category mappings unprotected from drift.
 
 The durable requirement is stricter: the source response, structural fields, free text, scheduled slot, actual fetch time, configuration identity, and database transaction are separate trust and provenance boundaries. Ambiguity at any boundary must fail closed, while valid retries and concurrent writers must converge without inventing a hybrid observation.
 
@@ -48,6 +51,8 @@ The durable requirement is stricter: the source response, structural fields, fre
 - Snapshot observation time came from database `now()`, and Post freshness used the scheduled slot. Delayed or same-slot retries could therefore preserve stale metadata.
 - A pre-call barrier showed only that two Python workers reached a wrapper; it did not prove that PostgreSQL blocked one transaction on the other's row lock.
 - Committed integration tests left board state behind, and the first cleanup attempt could delete a pre-existing empty board.
+- Category markers containing compatibility or repeated internal whitespace were silently rewritten instead of preserved after NFKC normalization.
+- Registry tests remained green when an unasserted source name, kind, fixed analysis unit, or job-category mapping changed.
 
 ## What Didn't Work
 
@@ -75,11 +80,22 @@ A barrier immediately before an UPSERT can still be followed by fully sequential
 
 Deleting any orphaned board assumed the test owned all state it touched. Setup performed before `try/finally` also made failures capable of escaping teardown.
 
+### Generic normalization and sample-only static-contract tests
+
+The parser passed category markers through `_normalized_text()`, a helper designed for layout text:
+
+```python
+def _normalized_text(node: Tag) -> str:
+    return " ".join(node.get_text(" ", strip=True).split())
+```
+
+That split/join is correct for titles and table cells but stronger than the category contract. Applying NFKC afterward could not restore whitespace already collapsed. The tests compounded the gap by checking only board IDs and representative mappings; they proved examples, not the complete ordered source registry or finite job-category map.
+
 ## Solution
 
 ### Anchor collection to an observed source contract
 
-The owned client uses the exact allow-listed Hero endpoint and refuses redirects, inherited proxy settings, compressed bodies, and oversized responses. A list response must be an exact `200 OK` with no `Content-Range`:
+The owned client constructs an exact page URL only for the static allow-listed board registry and a validated positive page number. It refuses redirects, inherited proxy settings, compressed bodies, and oversized responses. A list response must be an exact `200 OK` with no `Content-Range`:
 
 ```python
 if response.status_code != httpx.codes.OK or "content-range" in response.headers:
@@ -97,13 +113,33 @@ The parser accepts the observed ordered columns and matching direct cell classes
 추천 / reco
 ```
 
-Every data row must validate its complete six-cell topology, canonical article identity, date, and metrics before category filtering. Recognized non-Hero and excluded categories may then be skipped. Unknown categories, anchorless data rows, duplicate links, extra cells, and drifted classes reject the page.
+Every data row must validate its complete six-cell topology, canonical article identity, date, and metrics before category filtering. A recognized job category maps to one stable Analysis Unit; explicitly excluded or unmapped job categories are skipped only after structural validation. Non-job sources retain the visible category while using their source's fixed Analysis Unit. Anchorless data rows, duplicate links, extra cells, and drifted classes reject the page.
 
 ### Read control data only from structural nodes
 
 The category is exactly one prefix `span.category` directly inside the subject link. Comments are read only from exactly one direct `div.text-wrap > span.con-comment` sibling; blank means zero. Missing, duplicate, malformed, or nested-only markers reject the page.
 
 Only the verified category node is removed from the title. Bracketed questions, numeric suffixes, and malicious-looking text remain title data and reach the existing Unicode-aware quarantine scanner.
+
+Category text has its own narrower normalization path. It reads the structural marker directly, applies NFKC, removes only surrounding whitespace, and preserves internal whitespace:
+
+```python
+marker = unicodedata.normalize("NFKC", category_node.get_text()).strip()
+match = _CATEGORY_MARKER.fullmatch(marker)
+category = match["category"].strip()
+```
+
+The regression fixture includes full-width and repeated internal spaces, so a future reintroduction of split/join normalization fails visibly. The static source contracts are also asserted as complete values:
+
+```python
+assert tuple(
+    (source.key, source.board_id, source.name, source.kind, source.fixed_analysis_unit)
+    for source in SOURCES
+) == EXPECTED_SOURCES
+assert JOB_ANALYSIS_UNITS == EXPECTED_JOB_ANALYSIS_UNITS
+```
+
+Representative behavioral tests remain useful, but complete equality is what makes a small finite registry executable documentation. It detects missing, extra, reordered, renamed, or remapped entries.
 
 Article URLs are checked before canonical reconstruction. Literal query or fragment delimiters are rejected, including empty delimiters:
 
@@ -175,6 +211,8 @@ The scheduled slot answers "which logical replay bucket is this?" The actual fet
 
 The snapshot primary key makes a same-slot replay idempotent. Per-field maxima remain valid only when the configuration identity matches; an explicit conflict prevents a fabricated cross-configuration row. PostgreSQL evaluates the Post freshness predicate after any required row-lock wait, and the lock-aware test proves that execution path.
 
+Field-specific normalization prevents a layout cleanup policy from silently becoming a metadata mutation policy. NFKC handles compatibility characters, surrounding trim removes structural padding, and the absence of split/join preserves source-visible internal content. Exhaustive equality tests protect the complete finite registry while parser behavior tests protect the transformation semantics.
+
 ## Prevention
 
 - Capture external HTML from the production structure, sanitize values separately, and document which rows are synthetic.
@@ -189,12 +227,17 @@ The snapshot primary key makes a same-slot replay idempotent. Per-field maxima r
 - Keep collection transactions caller-owned, document the rollback contract, and test conflict rollback after partial in-transaction work.
 - Make integration cleanup ownership-aware and reproduce suspected leaks with an explicit test order.
 - Keep automated HTTP tests offline with bounded sanitized fixtures and mocked transport.
+- Define normalization per field; do not reuse a generic helper unless every transformation it performs belongs to that field's contract.
+- Test Unicode normalization separately from whitespace collapse using full-width, repeated internal, and surrounding whitespace cases.
+- Pin small finite registries and mappings with complete equality assertions, not selected IDs or representative lookups.
+- Search docstrings and diagnostics when a pilot scope expands so stale one-source wording cannot outlive the boundary it describes.
 - Close every review finding with a failing regression where possible, an exact-tree re-review, the full suite, phase gate, and migration checks.
 
-The final corrected tree passed 118 focused Task 4 tests and 401 repository tests. Ruff, formatting, diff checks, Phase 0, Alembic drift detection, offline migration SQL, upgrade/downgrade/upgrade, and independent clean-room re-review also passed.
+The expanded source-contract fix produced a review RED of 1 failure with 70 passes, followed by 71 passing affected tests, 120 focused tests, clean Ruff output, and 486 passing repository tests. The independent re-review approved the exact corrected tree with no remaining findings.
 
 ## Related Issues
 
 - [Snapshot-Driven, Replayable Monitoring Pipeline](../architecture-patterns/snapshot-driven-replayable-monitoring-pipeline.md) defines the wider VPS/laptop architecture, aligned snapshots, and test-gated rollout.
 - [Fail-Closed Local PostgreSQL Test Database Boundaries](../database-issues/fail-closed-local-postgresql-test-database-boundaries.md) documents the same evidence-before-capability principle for local database safety.
 - [Harden Rising Weight Normalization and Configuration Snapshot Immutability](../logic-errors/harden-rising-weight-normalization-and-config-snapshot-immutability.md) defines why a configuration version is an opaque identity of one immutable settings snapshot.
+- [Deterministic Unicode-Aware Prompt Injection Quarantine and Audited Release](../security-issues/deterministic-unicode-aware-prompt-injection-quarantine-and-audited-release.md) uses NFKC for a different field contract and illustrates why normalization policies must remain purpose-specific.

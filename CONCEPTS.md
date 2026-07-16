@@ -4,6 +4,10 @@
 
 ## Monitoring and Analysis
 
+### Collection Source
+
+An allow-listed public board definition that supplies source identity, board kind, and the Analysis Unit policy used to turn structurally valid list rows into metadata observations.
+
 ### Analysis Unit
 
 An independent job, free-board, or information-board scope within which posts are selected, ranked, and compared.
@@ -11,6 +15,22 @@ An independent job, free-board, or information-board scope within which posts ar
 ### Collection Slot
 
 An aligned scheduled-time bucket that identifies one replayable collection opportunity; it keys a Metric Snapshot but does not claim when the source was actually fetched.
+
+### High-Water Mark
+
+The newest ordinary post identity from the last complete incremental scan, used as the durable boundary for later scans and never advanced by a partial result.
+
+### Collector Run
+
+The durable execution record for one collection job and Collection Slot, used to resume interrupted work and suppress another upstream fetch after success.
+
+A Collector Run is claimed before external collection begins. Process-local scheduling limits may reduce overlap, but only the slot's cross-process lock and persisted lifecycle determine execution ownership. Replay restores the stored terminal outcome rather than inventing a new summary.
+
+### Backfill Budget
+
+The bounded allowance of historical source-page requests owned by one Collection Slot, distinct from the per-source cursor that records accepted progress.
+
+Each allowance is durably reserved before its external request, so retries and crash recovery share the remaining budget instead of resetting it.
 
 ### Source Observation Time
 
@@ -58,6 +78,20 @@ Configuration versions are opaque identities: they may be compared for equality 
 
 A verified bundle of acceptance checks that must pass before implementation expands into a later phase, leaving a durable receipt of the commands and outcomes.
 
+A production Phase Gate validates the installed artifact and live boundary behavior, not only repository files or fixture-shaped inputs.
+
 ### Test Database Preflight
 
 A fail-closed validation that proves the effective database target remains inside the isolated local test scope before any test, migration, subprocess, engine, or connection can acquire database capability.
+
+## Production Export
+
+### Export Release
+
+A coherent, checksummed bundle of production data published from one database snapshot and treated as the indivisible source for one local download.
+
+### Transfer Lease
+
+A temporary ownership marker that protects an Export Release from retention while a client is downloading and validating it.
+
+A Transfer Lease ends only after the client completes its critical publication gates; abandoned leases expire through bounded recovery so retention cannot remain blocked indefinitely.

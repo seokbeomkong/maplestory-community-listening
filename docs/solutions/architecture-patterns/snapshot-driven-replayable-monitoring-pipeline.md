@@ -148,3 +148,4 @@ attacker text -> Unicode normalization -> deterministic rule match
 ## Related
 
 - [Maple Inven Monitoring and Analysis Design](../../superpowers/specs/2026-07-14-maple-inven-monitoring-design.md)
+- [Adaptive Pagination Requires Overlap Before Advancing](../logic-errors/adaptive-pagination-requires-overlap-before-advancing.md)
