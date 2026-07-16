@@ -134,10 +134,11 @@ def _extract_category(title_cell: Tag, anchor: Tag) -> tuple[str, Tag]:
     ):
         raise InvalidSourcePage("article category marker is missing or ambiguous")
     category_node = direct_anchor_categories[0]
-    match = _CATEGORY_MARKER.fullmatch(_normalized_text(category_node))
+    marker = unicodedata.normalize("NFKC", category_node.get_text()).strip()
+    match = _CATEGORY_MARKER.fullmatch(marker)
     if match is None:
         raise InvalidSourcePage("article category marker is invalid")
-    category = unicodedata.normalize("NFKC", match["category"]).strip()
+    category = match["category"].strip()
     return category, category_node
 
 

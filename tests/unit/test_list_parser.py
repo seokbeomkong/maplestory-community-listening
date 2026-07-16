@@ -309,6 +309,24 @@ def test_non_job_sources_keep_visible_category_and_use_fixed_analysis_unit(
     assert item.analysis_unit == analysis_unit
 
 
+def test_non_job_category_normalizes_nfkc_without_collapsing_internal_whitespace() -> None:
+    [item] = parse_list_page(
+        5974,
+        _page(
+            rows=(
+                _article_row(
+                    board_id=5974,
+                    category="  수다　　잡담  ",
+                ),
+            )
+        ),
+        FETCHED_AT,
+    )
+
+    assert item.category == "수다  잡담"
+    assert item.analysis_unit == "free"
+
+
 @pytest.mark.parametrize(
     ("category", "field", "value", "message"),
     [

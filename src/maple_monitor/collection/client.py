@@ -24,7 +24,7 @@ class ListPageClientError(RuntimeError):
 
 
 class InvalidListPageTarget(ListPageClientError, ValueError):
-    """Raised before I/O when a requested board is outside the one-board slice."""
+    """Raised before I/O when a requested board or page is outside the allow list."""
 
 
 class ListPageTransportError(ListPageClientError):

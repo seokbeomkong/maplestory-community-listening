@@ -14,20 +14,99 @@ def _sources_module() -> ModuleType:
     return importlib.import_module("maple_monitor.sources")
 
 
-def test_source_registry_has_the_exact_production_board_order() -> None:
+def test_source_registry_has_the_exact_production_definitions() -> None:
     sources = _sources_module()
 
-    assert [source.board_id for source in sources.SOURCES] == [
-        2294,
-        2295,
-        2296,
-        2297,
-        2298,
-        5974,
-        2300,
-        2304,
-    ]
+    assert tuple(
+        (
+            source.key,
+            source.board_id,
+            source.name,
+            source.kind,
+            source.fixed_analysis_unit,
+        )
+        for source in sources.SOURCES
+    ) == (
+        ("warrior", 2294, "전사", "job", None),
+        ("magician", 2295, "마법사", "job", None),
+        ("archer", 2296, "궁수", "job", None),
+        ("thief", 2297, "도적", "job", None),
+        ("pirate", 2298, "해적", "job", None),
+        ("free", 5974, "자유 게시판", "free", "free"),
+        ("qna", 2300, "질문과 답변", "info", "qna"),
+        ("tips", 2304, "팁과 노하우", "info", "tips"),
+    )
     assert sources.source_for_board(5974).key == "free"
+
+
+def test_job_analysis_units_match_the_complete_stable_mapping() -> None:
+    sources = _sources_module()
+
+    assert sources.JOB_ANALYSIS_UNITS == {
+        2294: {
+            "히어로": "hero",
+            "팔라딘": "paladin",
+            "다크나이트": "dark_knight",
+            "소울마스터": "soul_master",
+            "아란": "aran",
+            "데몬슬레이어": "demon_slayer",
+            "미하일": "mihile",
+            "카이저": "kaiser",
+            "데몬어벤져": "demon_avenger",
+            "제로": "zero",
+            "블래스터": "blaster",
+            "아델": "adele",
+            "렌": "len",
+            "기타": "warrior_other",
+        },
+        2295: {
+            "아크(불독)": "arch_mage_fire_poison",
+            "아크(썬콜)": "arch_mage_ice_lightning",
+            "비숍": "bishop",
+            "플레임위자드": "flame_wizard",
+            "에반": "evan",
+            "배틀메이지": "battle_mage",
+            "루미너스": "luminous",
+            "키네시스": "kinesis",
+            "일리움": "illium",
+            "라라": "lara",
+            "레테": "lete",
+            "기타": "magician_other",
+        },
+        2296: {
+            "보우마스터": "bowmaster",
+            "신궁": "marksman",
+            "윈드브레이커": "wind_archer",
+            "와일드헌터": "wild_hunter",
+            "메르세데스": "mercedes",
+            "패스파인더": "pathfinder",
+            "카인": "kain",
+            "기타": "archer_other",
+        },
+        2297: {
+            "나이트로드": "night_lord",
+            "섀도어": "shadower",
+            "나이트워커": "night_walker",
+            "듀얼블레이드": "dual_blade",
+            "괴도팬텀": "phantom",
+            "카데나": "cadena",
+            "호영": "hoyoung",
+            "칼리": "khali",
+            "기타": "thief_other",
+        },
+        2298: {
+            "메카닉": "mechanic",
+            "바이퍼": "buccaneer",
+            "캡틴": "corsair",
+            "스트라이커": "thunder_breaker",
+            "캐논슈터": "cannon_shooter",
+            "엔젤릭버스터": "angelic_buster",
+            "제논": "xenon",
+            "은월": "shade",
+            "아크": "ark",
+            "기타": "pirate_other",
+        },
+    }
 
 
 def test_source_lookup_rejects_non_integer_and_unknown_board_ids() -> None:
