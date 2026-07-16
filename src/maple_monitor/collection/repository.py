@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import and_, func, literal, or_, tuple_, update
+from sqlalchemy import and_, func, literal, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,20 @@ def ensure_supported_board(session: Session, source: SourceDefinition) -> None:
         .on_conflict_do_nothing(index_elements=[Board.id])
     )
     session.execute(statement)
+
+
+def highest_ordinary_post_id(session: Session, board_id: int) -> int | None:
+    statement = (
+        select(Post.post_id)
+        .where(
+            Post.board_id == board_id,
+            Post.is_notice.is_(False),
+            Post.is_ad.is_(False),
+        )
+        .order_by(Post.post_id.desc())
+        .limit(1)
+    )
+    return session.execute(statement).scalar_one_or_none()
 
 
 def upsert_post(

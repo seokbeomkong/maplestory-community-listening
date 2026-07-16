@@ -1447,3 +1447,23 @@ def test_concurrent_post_upserts_recheck_actual_time_after_a_row_lock_wait(
             post_id,
             remove_orphaned_board=not board_preexisting,
         )
+
+
+def test_highest_ordinary_post_id_excludes_notices_and_ads(db_session: Session) -> None:
+    from maple_monitor.collection.repository import (
+        ensure_supported_board,
+        highest_ordinary_post_id,
+        upsert_post,
+    )
+    from maple_monitor.sources import source_for_board
+
+    ordinary_id = 2**63 - 3
+    ensure_supported_board(db_session, source_for_board(2294))
+    for item in (
+        _item(ordinary_id),
+        replace(_item(ordinary_id + 1), is_notice=True),
+        replace(_item(ordinary_id + 2), is_ad=True),
+    ):
+        upsert_post(db_session, item, observed_at_actual=FETCHED_AT)
+
+    assert highest_ordinary_post_id(db_session, 2294) == ordinary_id
