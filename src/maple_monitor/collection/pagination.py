@@ -67,7 +67,10 @@ def scan_incremental_pages(
         ):
             break
 
-    boundary_reached = prior_high_water is None or boundary_page is not None
+    boundary_reached = prior_high_water is None or (
+        boundary_page is not None
+        and pages_fetched >= boundary_page + settings.incremental_overlap_pages
+    )
     status: Literal["succeeded", "partial"] = "succeeded" if boundary_reached else "partial"
     high_water = greatest_ordinary_id if boundary_reached else prior_high_water
     return IncrementalScanResult(

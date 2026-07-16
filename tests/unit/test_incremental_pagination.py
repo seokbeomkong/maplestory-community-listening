@@ -186,3 +186,18 @@ def test_page_guard_partial_preserves_prior_high_water() -> None:
     assert result.boundary_reached is False
     assert result.high_water_post_id == 1
     assert result.status == "partial"
+
+
+def test_boundary_at_page_guard_is_partial_when_overlap_cannot_be_fetched() -> None:
+    prior_high_water = 500
+    pages = {page: [_item(700 - page)] for page in range(1, 100)}
+    pages[100] = [_item(prior_high_water)]
+
+    result, fetched_pages, waits = _scan(pages, prior_high_water=prior_high_water)
+
+    assert fetched_pages == list(range(1, 101))
+    assert len(waits) == 99
+    assert result.pages_fetched == 100
+    assert result.boundary_reached is False
+    assert result.high_water_post_id == prior_high_water
+    assert result.status == "partial"
