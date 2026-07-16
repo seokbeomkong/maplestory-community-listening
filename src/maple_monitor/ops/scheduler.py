@@ -232,6 +232,7 @@ def _run_backfill_cycle(
     slot: datetime,
     started_at: datetime,
     loaded: LoadedSettings,
+    sources: tuple[SourceDefinition, ...],
 ) -> BackfillBudgetSummary:
     """Spend the slot's durable backfill allowance under one advisory lock."""
 
@@ -284,6 +285,7 @@ def _run_backfill_cycle(
                 fetched_at=current_kst_time,
                 wait_between_pages=lambda: _wait_for_request(loaded),
                 reserve_page=reserve_page,
+                sources=sources,
             )
         except _RETRYABLE_ERRORS:
             with session_scope(engine) as session:
@@ -339,7 +341,20 @@ def collect_and_rank_once(settings_path: Path) -> CollectionCycleSummary:
         results = tuple(
             _collect_source(engine, source, slot, started_at, loaded) for source in SOURCES
         )
-        backfill = _run_backfill_cycle(engine, slot, started_at, loaded)
+        result_by_source_key = {result.source_key: result for result in results}
+        eligible_backfill_sources = tuple(
+            source
+            for source in SOURCES
+            if result_by_source_key[source.key].status
+            in {"succeeded", "already_succeeded"}
+        )
+        backfill = _run_backfill_cycle(
+            engine,
+            slot,
+            started_at,
+            loaded,
+            eligible_backfill_sources,
+        )
         with session_scope(engine) as session:
             ranking_rows = refresh_cumulative(
                 session,

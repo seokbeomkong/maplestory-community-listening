@@ -151,6 +151,78 @@ def test_page_guard_partial_does_not_store_or_finish_succeeded(
     assert result.status == "failed"
 
 
+def test_backfill_receives_only_sources_with_completed_incremental_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    durable_backfill_cycle = scheduler._run_backfill_cycle
+    _install_cycle_fakes(monkeypatch)
+    monkeypatch.setattr(scheduler, "_run_backfill_cycle", durable_backfill_cycle)
+    selected_sources = SOURCES[:5]
+    monkeypatch.setattr(scheduler, "SOURCES", selected_sources)
+    statuses = {
+        "warrior": "failed",
+        "magician": "already_succeeded",
+        "archer": "partial",
+        "thief": "succeeded",
+        "pirate": "busy",
+    }
+    monkeypatch.setattr(
+        scheduler,
+        "_collect_source",
+        lambda engine, source, slot, started_at, loaded: scheduler.SourceCycleResult(
+            source.key,
+            statuses[source.key],
+            0,
+            0,
+            statuses[source.key] in {"succeeded", "already_succeeded"},
+        ),
+    )
+    backfill_sources: list[tuple[str, ...]] = []
+
+    def backfill(*args: object, sources: object, **kwargs: object) -> BackfillBudgetSummary:
+        backfill_sources.append(tuple(source.key for source in sources))
+        return BackfillBudgetSummary(0, 0, ())
+
+    monkeypatch.setattr(scheduler, "run_backfill_budget", backfill)
+
+    scheduler.collect_and_rank_once(Path("config/settings.yaml"))
+
+    assert backfill_sources == [("magician", "thief")]
+
+
+def test_backfill_receives_no_sources_when_every_incremental_slot_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    durable_backfill_cycle = scheduler._run_backfill_cycle
+    _install_cycle_fakes(monkeypatch)
+    monkeypatch.setattr(scheduler, "_run_backfill_cycle", durable_backfill_cycle)
+    selected_sources = SOURCES[:3]
+    monkeypatch.setattr(scheduler, "SOURCES", selected_sources)
+    statuses = {"warrior": "failed", "magician": "partial", "archer": "busy"}
+    monkeypatch.setattr(
+        scheduler,
+        "_collect_source",
+        lambda engine, source, slot, started_at, loaded: scheduler.SourceCycleResult(
+            source.key,
+            statuses[source.key],
+            0,
+            0,
+            False,
+        ),
+    )
+    backfill_sources: list[tuple[str, ...]] = []
+
+    def backfill(*args: object, sources: object, **kwargs: object) -> BackfillBudgetSummary:
+        backfill_sources.append(tuple(source.key for source in sources))
+        return BackfillBudgetSummary(0, 0, ())
+
+    monkeypatch.setattr(scheduler, "run_backfill_budget", backfill)
+
+    scheduler.collect_and_rank_once(Path("config/settings.yaml"))
+
+    assert backfill_sources == [()]
+
+
 def test_scheduler_registers_one_non_overlapping_cron_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
