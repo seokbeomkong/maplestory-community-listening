@@ -1,0 +1,13 @@
+.git
+.worktrees
+.venv
+.pytest_cache
+.ruff_cache
+.test-receipts
+__pycache__
+data
+docs
+tests
+.env
+.env.*
+!.env.production.example

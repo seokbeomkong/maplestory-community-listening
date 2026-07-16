@@ -437,24 +437,23 @@ dependencies = [
     { name = "alembic" },
     { name = "apscheduler" },
     { name = "beautifulsoup4" },
-    { name = "fastapi" },
     { name = "httpx" },
     { name = "lxml" },
-    { name = "numpy" },
-    { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
-    { name = "streamlit" },
     { name = "typer" },
-    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 browser = [
     { name = "playwright" },
+]
+dashboard = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "streamlit" },
 ]
 local-analysis = [
     { name = "duckdb" },
@@ -462,13 +461,21 @@ local-analysis = [
     { name = "pytesseract" },
     { name = "scikit-learn" },
 ]
+queue-api = [
+    { name = "fastapi" },
+    { name = "pydantic-settings" },
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "respx" },
     { name = "ruff" },
+    { name = "streamlit" },
 ]
 
 [package.metadata]
@@ -477,32 +484,35 @@ requires-dist = [
     { name = "apscheduler", specifier = ">=3.10,<4" },
     { name = "beautifulsoup4", specifier = ">=4.12,<5" },
     { name = "duckdb", marker = "extra == 'local-analysis'", specifier = ">=1,<2" },
-    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "fastapi", marker = "extra == 'queue-api'", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "lxml", specifier = ">=5,<7" },
-    { name = "numpy", specifier = ">=2,<3" },
-    { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "numpy", marker = "extra == 'dashboard'", specifier = ">=2,<3" },
+    { name = "pandas", marker = "extra == 'dashboard'", specifier = ">=2.2,<3" },
     { name = "pillow", marker = "extra == 'local-analysis'", specifier = ">=11,<13" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.48,<2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pydantic", specifier = ">=2.9,<3" },
-    { name = "pydantic-settings", specifier = ">=2.5,<3" },
+    { name = "pydantic-settings", marker = "extra == 'queue-api'", specifier = ">=2.5,<3" },
     { name = "pytesseract", marker = "extra == 'local-analysis'", specifier = ">=0.3,<1" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "scikit-learn", marker = "extra == 'local-analysis'", specifier = ">=1.5,<2" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
-    { name = "streamlit", specifier = ">=1.40,<2" },
+    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.40,<2" },
     { name = "typer", specifier = ">=0.12,<1" },
-    { name = "uvicorn", specifier = ">=0.30,<1" },
+    { name = "uvicorn", marker = "extra == 'queue-api'", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["browser", "local-analysis"]
+provides-extras = ["dashboard", "queue-api", "browser", "local-analysis"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "pandas", specifier = ">=2.2,<3" },
     { name = "pytest", specifier = ">=8,<10" },
     { name = "pytest-cov", specifier = ">=5,<8" },
     { name = "respx", specifier = ">=0.21,<1" },
     { name = "ruff", specifier = ">=0.8,<1" },
+    { name = "streamlit", specifier = ">=1.40,<2" },
 ]
 
 [[package]]

@@ -1,6 +1,8 @@
 .worktrees/
 .superpowers/
 .env
+.env.*
+!.env.production.example
 .venv/
 __pycache__/
 .pytest_cache/

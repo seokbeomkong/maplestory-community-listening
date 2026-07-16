@@ -1,0 +1,82 @@
+name: maple-inven-monitor
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: maple-inven-monitor:0.1.0
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-maple_monitor}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maple_monitor}
+    TZ: Asia/Seoul
+  volumes:
+    - ./config:/app/config:ro
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16.8-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-maple_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-maple_monitor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      TZ: Asia/Seoul
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 1536m
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app
+    command:
+      - maple-monitor
+      - scheduler
+      - --settings
+      - /app/config/settings.yaml
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    cpus: "0.75"
+    healthcheck:
+      test: ["CMD", "maple-monitor", "collector-health", "--max-age-hours", "13"]
+      interval: 5m
+      timeout: 15s
+      retries: 3
+      start_period: 3m
+
+volumes:
+  postgres_data: {}
