@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from datetime import timedelta
+from pathlib import Path
+
+import pandas as pd
+
+from maple_monitor.dashboard.export_analysis import (
+    collection_health,
+    job_comparison,
+    rank_posts,
+    select_window,
+    semantic_availability,
+)
+from maple_monitor.dashboard.export_data import ExportBundle
+
+
+def _posts() -> pd.DataFrame:
+    as_of = pd.Timestamp("2026-07-17 00:20:00", tz="Asia/Seoul")
+    rows: list[dict[str, object]] = []
+    for index, days_ago in enumerate((1, 2, 8, 10, 12, 20), start=1):
+        rows.append(
+            {
+                "board_id": 2294,
+                "board_name": "전사",
+                "post_id": index,
+                "analysis_unit": "hero",
+                "title": f"히어로 글 {index}",
+                "published_at": as_of - timedelta(days=days_ago),
+                "source_url": f"https://www.inven.co.kr/board/maple/2294/{index}",
+                "current_category": "히어로",
+                "observed_at_slot_kst": as_of,
+                "observed_at_actual": as_of,
+                "views": 100 * index,
+                "recommendations": index,
+                "comments": index * 2,
+                "config_version": "abc",
+            }
+        )
+    rows.append(
+        {
+            **rows[0],
+            "board_id": 5974,
+            "post_id": 99,
+            "analysis_unit": "free",
+            "title": "자유게시판 글",
+            "published_at": as_of - timedelta(hours=2),
+            "comments": 30,
+        }
+    )
+    return pd.DataFrame(rows)
+
+
+def _bundle() -> ExportBundle:
+    runs = pd.DataFrame(
+        [
+            {
+                "id": "one",
+                "job_type": "metadata:free",
+                "scheduled_at_slot_kst": pd.Timestamp("2026-07-17 00:20:00", tz="UTC"),
+                "status": "succeeded",
+                "config_version": "abc",
+                "started_at": pd.Timestamp("2026-07-17 00:20:00", tz="UTC"),
+                "finished_at": pd.Timestamp("2026-07-17 00:21:00", tz="UTC"),
+                "diagnostics": "{}",
+            },
+            {
+                "id": "two",
+                "job_type": "metadata:warrior",
+                "scheduled_at_slot_kst": pd.Timestamp("2026-07-16 18:20:00", tz="UTC"),
+                "status": "failed",
+                "config_version": "abc",
+                "started_at": pd.Timestamp("2026-07-16 18:20:00", tz="UTC"),
+                "finished_at": pd.Timestamp("2026-07-16 18:21:00", tz="UTC"),
+                "diagnostics": '{"attempts": 3}',
+            },
+        ]
+    )
+    return ExportBundle(
+        posts=_posts(),
+        rankings=pd.DataFrame(),
+        runs=runs,
+        quarantine=pd.DataFrame(),
+        checksums={"latest_post_metrics.csv": True},
+        source_path=Path("production.zip"),
+    )
+
+
+def test_job_window_falls_back_to_thirty_days_when_seven_days_is_sparse() -> None:
+    result = select_window(
+        _posts(), "hero", hours=168, fallback_hours=720, minimum=5
+    )
+
+    assert result.effective_hours == 720
+    assert result.fallback_reason == "7일 표본 부족"
+    assert len(result.rows) == 6
+
+
+def test_free_window_keeps_twenty_four_hour_scope() -> None:
+    result = select_window(_posts(), "free", hours=24)
+
+    assert result.effective_hours == 24
+    assert result.fallback_reason is None
+    assert result.rows["title"].tolist() == ["자유게시판 글"]
+
+
+def test_rank_posts_uses_one_factual_metric_and_stable_ties() -> None:
+    rows = _posts().query("analysis_unit == 'hero'")
+
+    ranked = rank_posts(rows, "comments", limit=3)
+
+    assert ranked.columns.tolist() == ["title", "comments", "published_at", "source_url"]
+    assert ranked["comments"].tolist() == [12, 10, 8]
+
+
+def test_job_comparison_shows_sample_and_per_post_rates() -> None:
+    comparison = job_comparison(_posts(), minimum=1)
+
+    hero = comparison.query("analysis_unit == 'hero'").iloc[0]
+    assert hero["sample_size"] == 2
+    assert hero["total_comments"] == 6
+    assert hero["comments_per_post"] == 3.0
+    assert "free" not in comparison["analysis_unit"].tolist()
+
+
+def test_collection_health_keeps_failure_attributable() -> None:
+    health = collection_health(_bundle())
+
+    assert health.total_runs == 2
+    assert health.succeeded_runs == 1
+    assert health.failed_runs == 1
+    assert health.failed.iloc[0]["job_type"] == "metadata:warrior"
+
+
+def test_current_export_reports_semantic_analysis_unavailable() -> None:
+    availability = semantic_availability(_bundle())
+
+    assert availability.available is False
+    assert availability.label == "감성 분석 데이터 없음"
