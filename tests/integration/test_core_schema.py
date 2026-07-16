@@ -36,6 +36,7 @@ CORE_TABLES = {
     "run_slots",
     "work_items",
     "security_quarantine",
+    "source_backfill_states",
 }
 
 COLUMN_CONTRACTS = {
@@ -110,6 +111,13 @@ COLUMN_CONTRACTS = {
         "note": (("text", None), True),
         "released_at": (("timestamptz", None), True),
     },
+    "source_backfill_states": {
+        "source_key": (("text", None), False),
+        "next_page": (("integer", None), False),
+        "checkpoint_post_id": (("bigint", None), True),
+        "complete": (("boolean", None), False),
+        "updated_at": (("timestamptz", None), False),
+    },
 }
 
 PRIMARY_KEY_CONTRACTS = {
@@ -120,6 +128,7 @@ PRIMARY_KEY_CONTRACTS = {
     "run_slots": ("job_type", "scheduled_at_slot_kst"),
     "work_items": ("id",),
     "security_quarantine": ("id",),
+    "source_backfill_states": ("source_key",),
 }
 
 FOREIGN_KEY_CONTRACTS = {
@@ -130,6 +139,7 @@ FOREIGN_KEY_CONTRACTS = {
     "run_slots": {(("run_id",), "collection_runs", ("id",))},
     "work_items": set(),
     "security_quarantine": set(),
+    "source_backfill_states": set(),
 }
 
 UNIQUE_KEY_CONTRACTS = {
@@ -140,6 +150,7 @@ UNIQUE_KEY_CONTRACTS = {
     "run_slots": set(),
     "work_items": {("task_key",)},
     "security_quarantine": {("source_kind", "source_ref", "content_hash")},
+    "source_backfill_states": set(),
 }
 
 SERVER_DEFAULT_COLUMNS = {
@@ -150,6 +161,7 @@ SERVER_DEFAULT_COLUMNS = {
     "run_slots": set(),
     "work_items": {"id", "priority", "payload", "attempts", "created_at", "updated_at"},
     "security_quarantine": {"quarantined_at"},
+    "source_backfill_states": {"complete", "updated_at"},
 }
 
 
@@ -538,15 +550,18 @@ def test_migration_upgrade_downgrade_upgrade_round_trip(database_url: str) -> No
         target_engine = create_engine(target_url)
         try:
             table_names = set(inspect(target_engine).get_table_names())
-            assert CORE_TABLES - {"security_quarantine"} <= table_names
+            assert CORE_TABLES - {"security_quarantine", "source_backfill_states"} <= table_names
             assert "security_quarantine" not in table_names
+            assert "source_backfill_states" not in table_names
         finally:
             target_engine.dispose()
 
         command.upgrade(config, "0002_security_quarantine")
         target_engine = create_engine(target_url)
         try:
-            assert CORE_TABLES <= set(inspect(target_engine).get_table_names())
+            assert CORE_TABLES - {"source_backfill_states"} <= set(
+                inspect(target_engine).get_table_names()
+            )
         finally:
             target_engine.dispose()
 
@@ -554,8 +569,9 @@ def test_migration_upgrade_downgrade_upgrade_round_trip(database_url: str) -> No
         target_engine = create_engine(target_url)
         try:
             table_names = set(inspect(target_engine).get_table_names())
-            assert CORE_TABLES - {"security_quarantine"} <= table_names
+            assert CORE_TABLES - {"security_quarantine", "source_backfill_states"} <= table_names
             assert "security_quarantine" not in table_names
+            assert "source_backfill_states" not in table_names
         finally:
             target_engine.dispose()
 

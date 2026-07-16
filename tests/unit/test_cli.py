@@ -163,3 +163,43 @@ def test_collect_command_redacts_snapshot_config_conflict(
     assert json.loads(result.stdout) == {"error": "collection_failed"}
     assert leaked_detail not in result.stdout
     assert engine.disposed
+
+
+def test_collect_and_rank_now_prints_a_bounded_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maple_monitor.ops.scheduler import CollectionCycleSummary, SourceCycleResult
+
+    monkeypatch.setattr(
+        cli,
+        "collect_and_rank_with_retries",
+        lambda settings: CollectionCycleSummary(
+            slot=datetime(2026, 7, 15, 6, 20, tzinfo=ZoneInfo("Asia/Seoul")),
+            sources=(
+                SourceCycleResult("warrior", "succeeded", 2, 3, True),
+                SourceCycleResult("magician", "failed", 0, 0, False),
+                SourceCycleResult("archer", "already_succeeded", 0, 0, True),
+            ),
+            ranking_rows=9,
+            status="partial",
+        ),
+        raising=False,
+    )
+
+    result = CliRunner().invoke(app, ["collect-and-rank", "--now"])
+
+    assert result.exit_code == 0, str(result.exception)
+    assert json.loads(result.stdout) == {
+        "ranking_rows": 9,
+        "slot": "2026-07-15T06:20:00+09:00",
+        "source_counts": {
+            "already_succeeded": 1,
+            "busy": 0,
+            "failed": 1,
+            "partial": 0,
+            "succeeded": 1,
+        },
+        "status": "partial",
+        "total_accepted": 3,
+        "total_pages_fetched": 2,
+    }

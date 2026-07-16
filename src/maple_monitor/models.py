@@ -107,6 +107,30 @@ class RunSlot(Base):
     )
 
 
+class SourceBackfillState(Base):
+    __tablename__ = "source_backfill_states"
+    __table_args__ = (
+        CheckConstraint(
+            "next_page > 0",
+            name="source_backfill_states_next_page_check",
+        ),
+        CheckConstraint(
+            "source_key IN ('warrior', 'magician', 'archer', 'thief', "
+            "'pirate', 'free', 'qna', 'tips')",
+            name="source_backfill_states_source_key_check",
+        ),
+        Index("source_backfill_states_updated_at_idx", "updated_at"),
+    )
+
+    source_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    next_page: Mapped[int] = mapped_column(Integer)
+    checkpoint_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    complete: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
 class WorkItem(Base):
     __tablename__ = "work_items"
     __table_args__ = (
