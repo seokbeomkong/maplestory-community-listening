@@ -4,7 +4,6 @@ import hashlib
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from types import MappingProxyType
 from typing import Final, Mapping
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
@@ -131,7 +130,7 @@ def _verify_checksums(archive: ZipFile) -> Mapping[str, bool]:
         results[name] = actual == expected[name]
         if not results[name]:
             raise ExportArchiveError(f"checksum mismatch for {name}")
-    return MappingProxyType(results)
+    return results
 
 
 def _approved_source_url(value: object) -> str:
