@@ -154,6 +154,29 @@ The release contract remains exactly four CSV files plus `SHA256SUMS.txt`:
 
 These are metadata exports; they contain no raw body or comment text.
 
+### Local export dashboard
+
+The export dashboard reads one verified ZIP without connecting to production PostgreSQL. It keeps
+engagement, collection health, and unavailable semantic analysis visibly separate.
+
+PowerShell:
+
+```powershell
+$env:MAPLE_EXPORT_PATH = (Get-ChildItem .\exports\production-*.zip |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+uv run streamlit run src/maple_monitor/dashboard/export_app.py
+```
+
+POSIX shell:
+
+```bash
+export MAPLE_EXPORT_PATH="$(ls -t exports/production-*.zip | head -1)"
+uv run streamlit run src/maple_monitor/dashboard/export_app.py
+```
+
+The dashboard verifies the archive manifest and CSV schemas before rendering. Do not commit export
+archives; they remain local operating data.
+
 ## 6. Operations
 
 - Change schedule and ranking values in `config/settings.yaml`, then restart only the scheduler:
