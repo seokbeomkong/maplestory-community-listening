@@ -21,6 +21,8 @@ class RunClaim:
     attempts: int
     ranking_rows: int
     pages_consumed: int = 0
+    accepted: int = 0
+    failed_sources: tuple[str, ...] = ()
 
 
 def _diagnostic_count(diagnostics: dict[str, object], key: str) -> int:
@@ -28,6 +30,13 @@ def _diagnostic_count(diagnostics: dict[str, object], key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return 0
     return value
+
+
+def _diagnostic_sources(diagnostics: dict[str, object]) -> tuple[str, ...]:
+    value = diagnostics.get("failed_sources", ())
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(source for source in value if isinstance(source, str) and source)
 
 
 def collector_lock_key(job_type: str, slot: datetime) -> int:
@@ -112,6 +121,8 @@ def claim_run_slot(
     attempts = _diagnostic_count(diagnostics, "attempts")
     ranking_rows = _diagnostic_count(diagnostics, "ranking_rows")
     pages_consumed = _diagnostic_count(diagnostics, "pages_consumed")
+    accepted = _diagnostic_count(diagnostics, "accepted")
+    failed_sources = _diagnostic_sources(diagnostics)
     if row["status"] == "succeeded":
         return RunClaim(
             row["id"],
@@ -119,6 +130,8 @@ def claim_run_slot(
             attempts,
             ranking_rows,
             pages_consumed,
+            accepted,
+            failed_sources,
         )
 
     attempts += 1
@@ -136,7 +149,15 @@ def claim_run_slot(
             "diagnostics": json.dumps(diagnostics, sort_keys=True),
         },
     )
-    return RunClaim(row["id"], "acquired", attempts, ranking_rows, pages_consumed)
+    return RunClaim(
+        row["id"],
+        "acquired",
+        attempts,
+        ranking_rows,
+        pages_consumed,
+        accepted,
+        failed_sources,
+    )
 
 
 def reserve_run_page(

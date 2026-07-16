@@ -252,7 +252,11 @@ def _run_backfill_cycle(
                 started_at=started_at,
             )
         if claim.disposition == "already_succeeded":
-            return BackfillBudgetSummary(0, 0, ())
+            return BackfillBudgetSummary(
+                claim.pages_consumed,
+                claim.accepted,
+                claim.failed_sources,
+            )
 
         page_budget = loaded.settings.collection.backfill_page_budget_per_cycle
         pages_consumed = claim.pages_consumed

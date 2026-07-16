@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -202,28 +203,37 @@ def test_retry_wrapper_does_not_retry_invalid_configuration(
         scheduler.collect_and_rank_with_retries(Path("config/settings.yaml"))
 
 
-def test_ranking_retry_does_not_replay_completed_backfill_budget(
+def test_ranking_retry_preserves_partial_backfill_outcome_without_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     durable_backfill_cycle = scheduler._run_backfill_cycle
     _install_cycle_fakes(monkeypatch)
     monkeypatch.setattr(scheduler, "_run_backfill_cycle", durable_backfill_cycle)
-    monkeypatch.setattr(scheduler, "SOURCES", ())
+    monkeypatch.setattr(scheduler, "SOURCES", SOURCES[:1])
+    monkeypatch.setattr(
+        scheduler,
+        "_collect_source",
+        lambda *args, **kwargs: scheduler.SourceCycleResult(
+            "warrior", "succeeded", 2, 1, True
+        ),
+    )
 
     backfill_run_id = UUID(int=99)
     pages_consumed = 0
     backfill_succeeded = False
+    persisted_failed_sources: tuple[str, ...] = ()
     fetches: list[int] = []
     ranking_attempts = 0
 
-    def claim(*args: object, **kwargs: object) -> RunClaim:
+    def claim(*args: object, **kwargs: object) -> object:
         assert kwargs["job_type"] == "metadata-backfill"
-        return RunClaim(
-            backfill_run_id,
-            "already_succeeded" if backfill_succeeded else "acquired",
-            1,
-            0,
-            pages_consumed,
+        return SimpleNamespace(
+            run_id=backfill_run_id,
+            disposition="already_succeeded" if backfill_succeeded else "acquired",
+            attempts=1,
+            pages_consumed=pages_consumed,
+            accepted=0,
+            failed_sources=persisted_failed_sources,
         )
 
     def reserve(*args: object, **kwargs: object) -> int | None:
@@ -237,12 +247,14 @@ def test_ranking_retry_does_not_replay_completed_backfill_budget(
         reserve_page = kwargs["reserve_page"]
         while reserve_page():
             fetches.append(len(fetches) + 1)
-        return BackfillBudgetSummary(len(fetches), 0, ())
+        return BackfillBudgetSummary(len(fetches), 0, ("free",))
 
     def finish(*args: object, **kwargs: object) -> None:
-        nonlocal backfill_succeeded
+        nonlocal backfill_succeeded, persisted_failed_sources
         assert kwargs["run_id"] == backfill_run_id
         assert kwargs["status"] == "succeeded"
+        diagnostics = kwargs["diagnostics"]
+        persisted_failed_sources = tuple(diagnostics["failed_sources"])
         backfill_succeeded = True
 
     def rank(*args: object, **kwargs: object) -> int:
@@ -265,5 +277,6 @@ def test_ranking_retry_does_not_replay_completed_backfill_budget(
     )
 
     assert result.ranking_rows == 9
+    assert result.status == "partial"
     assert ranking_attempts == 2
     assert len(fetches) == 40

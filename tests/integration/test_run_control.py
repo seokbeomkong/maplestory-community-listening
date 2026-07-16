@@ -74,6 +74,33 @@ def test_backfill_page_reservations_survive_crash_reacquisition(
                 {"run_id": first.run_id},
             ).one()
         assert persisted == ("partial", "2")
+
+        with Session(db_engine) as session:
+            finish_run(
+                session,
+                run_id=first.run_id,
+                status="succeeded",
+                finished_at=slot + timedelta(minutes=3),
+                diagnostics={
+                    "attempts": 2,
+                    "pages_consumed": 2,
+                    "accepted": 3,
+                    "failed_sources": ["free"],
+                },
+            )
+            session.commit()
+
+        with Session(db_engine) as session:
+            replay = claim_run_slot(
+                session,
+                job_type=job_type,
+                slot=slot,
+                config_version="a" * 64,
+                started_at=slot + timedelta(minutes=4),
+            )
+        assert replay.disposition == "already_succeeded"
+        assert replay.accepted == 3
+        assert replay.failed_sources == ("free",)
     finally:
         with db_engine.begin() as connection:
             connection.execute(
