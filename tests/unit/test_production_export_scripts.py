@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
 
 import pytest
@@ -291,6 +292,35 @@ def test_bash_helper_is_tracked_as_executable() -> None:
     )
 
     assert result.stdout.split()[0] == "100755"
+
+
+def test_bash_helper_archive_preserves_unix_line_endings_and_mode(tmp_path: Path) -> None:
+    archive_path = tmp_path / "source.tar"
+    subprocess.run(
+        [
+            "git",
+            "archive",
+            "--worktree-attributes",
+            "--format=tar",
+            "-o",
+            str(archive_path),
+            "HEAD",
+        ],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+    )
+
+    with tarfile.open(archive_path, mode="r") as archive:
+        member = archive.getmember("scripts/export-production-csv.sh")
+        archived_script = archive.extractfile(member)
+        assert archived_script is not None
+        script_bytes = archived_script.read()
+
+    assert script_bytes.startswith(b"#!/usr/bin/env bash\n")
+    assert b"\r\n" not in script_bytes
+    assert member.mode & 0o111 == 0o111
+    attributes = REPOSITORY_ROOT / ".gitattributes"
+    assert "*.sh text eol=lf" in attributes.read_text(encoding="utf-8").splitlines()
 
 
 def test_powershell_wrapper_has_verified_partial_download_contract() -> None:
