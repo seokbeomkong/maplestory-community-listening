@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Final
 from urllib.parse import SplitResult, parse_qsl, urlsplit
@@ -9,12 +10,11 @@ from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup, Tag
 
 from maple_monitor.collection.types import PostListItem
+from maple_monitor.sources import SourceDefinition, analysis_unit_for, source_for_board
 
 
 MAX_LIST_PAGE_BYTES: Final = 512_000
-SUPPORTED_BOARD_ID: Final = 2294
 SUPPORTED_CATEGORY: Final = "히어로"
-SUPPORTED_ANALYSIS_UNIT: Final = "hero"
 CANONICAL_HOST: Final = "www.inven.co.kr"
 KST: Final = ZoneInfo("Asia/Seoul")
 
@@ -40,27 +40,6 @@ _COMMENT_MARKER = re.compile(r"\[(?P<count>(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+))]
 _INTEGER = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\Z")
 _NOTICE_CLASSES: Final = frozenset({"notice", "notice-row"})
 _AD_CLASSES: Final = frozenset({"ad", "ad-row", "advertisement"})
-_RECOGNIZED_BOARD_CATEGORIES: Final = frozenset(
-    {
-        "팁/정보",
-        "히어로",
-        "팔라딘",
-        "다크나이트",
-        "소울마스터",
-        "아란",
-        "데몬슬레이어",
-        "미하일",
-        "카이저",
-        "데몬어벤져",
-        "제로",
-        "블래스터",
-        "아델",
-        "렌",
-        "핑크빈",
-    }
-)
-
-
 class InvalidSourcePage(ValueError):
     """Raised when a response is not the narrow supported list-page structure."""
 
@@ -158,9 +137,7 @@ def _extract_category(title_cell: Tag, anchor: Tag) -> tuple[str, Tag]:
     match = _CATEGORY_MARKER.fullmatch(_normalized_text(category_node))
     if match is None:
         raise InvalidSourcePage("article category marker is invalid")
-    category = match["category"].strip()
-    if category not in _RECOGNIZED_BOARD_CATEGORIES:
-        raise InvalidSourcePage("article category is unsupported")
+    category = unicodedata.normalize("NFKC", match["category"]).strip()
     return category, category_node
 
 
@@ -263,9 +240,10 @@ def _row_kind(row: Tag, title_cell: Tag) -> tuple[bool, bool]:
 def _parse_article_row(
     row: Tag,
     columns: dict[str, int],
-    board_id: int,
+    source: SourceDefinition,
     fetched_at: datetime,
 ) -> tuple[bool, PostListItem | None]:
+    board_id = source.board_id
     cells = row.find_all("td", recursive=False)
     if not cells:
         if _normalized_text(row):
@@ -311,13 +289,14 @@ def _parse_article_row(
         _normalized_text(cells[columns["recommendations"]]),
         field="recommendation",
     )
-    if category != SUPPORTED_CATEGORY:
+    analysis_unit = analysis_unit_for(source, category)
+    if analysis_unit is None:
         return True, None
 
     return True, PostListItem(
         board_id=board_id,
         post_id=post_id,
-        analysis_unit=SUPPORTED_ANALYSIS_UNIT,
+        analysis_unit=analysis_unit,
         category=category,
         title=title,
         published_at=published_at,
@@ -331,11 +310,9 @@ def _parse_article_row(
 
 
 def parse_list_page(board_id: int, html: bytes, fetched_at: datetime) -> list[PostListItem]:
-    if (
-        isinstance(board_id, bool)
-        or not isinstance(board_id, int)
-        or board_id != SUPPORTED_BOARD_ID
-    ):
+    try:
+        source = source_for_board(board_id)
+    except (TypeError, ValueError):
         raise InvalidSourcePage("unsupported board")
     if not isinstance(fetched_at, datetime) or fetched_at.tzinfo is None:
         raise ValueError("fetched_at must be a timezone-aware datetime")
@@ -365,7 +342,7 @@ def parse_list_page(board_id: int, html: bytes, fetched_at: datetime) -> list[Po
     items: list[PostListItem] = []
     validated_article_rows = 0
     for row in table.select("tbody tr"):
-        is_article, item = _parse_article_row(row, columns, board_id, fetched_at)
+        is_article, item = _parse_article_row(row, columns, source, fetched_at)
         validated_article_rows += int(is_article)
         if item is not None:
             items.append(item)

@@ -19,6 +19,10 @@ class CollectionSettings(StrictModel):
     request_max_delay_seconds: float = Field(ge=0.5, le=60)
     concurrency: int = Field(ge=1, le=2)
     max_retries: int = Field(ge=0, le=10)
+    incremental_min_pages: int = Field(ge=1, le=100)
+    incremental_overlap_pages: int = Field(ge=0, le=100)
+    incremental_max_pages: int = Field(ge=1, le=100)
+    backfill_page_budget_per_cycle: int = Field(ge=0, le=100_000)
 
     @model_validator(mode="after")
     def interval_divides_day(self) -> "CollectionSettings":
@@ -26,6 +30,8 @@ class CollectionSettings(StrictModel):
             raise ValueError("collection.interval_hours must divide 24")
         if self.request_max_delay_seconds < self.request_min_delay_seconds:
             raise ValueError("maximum request delay must not be below minimum request delay")
+        if self.incremental_min_pages > self.incremental_max_pages:
+            raise ValueError("incremental minimum pages must not exceed maximum pages")
         return self
 
 

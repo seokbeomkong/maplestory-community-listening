@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -18,12 +19,10 @@ from maple_monitor.collection.repository import (
 from maple_monitor.collection.types import CollectionSummary, PostListItem
 from maple_monitor.config import LoadedSettings
 from maple_monitor.security.service import quarantine_if_needed
+from maple_monitor.sources import SourceDefinition, analysis_unit_for, source_for_board
 
 
 KST: Final = ZoneInfo("Asia/Seoul")
-SUPPORTED_BOARD_ID: Final = 2294
-SUPPORTED_ANALYSIS_UNIT: Final = "hero"
-SUPPORTED_CATEGORY: Final = "히어로"
 MAX_ITEMS_PER_SLOT: Final = 5_000
 MAX_TITLE_CHARACTERS: Final = 500
 _CONFIG_VERSION = re.compile(r"[0-9a-f]{64}\Z")
@@ -64,11 +63,10 @@ def _validate_collection_context(
     board_id: int,
     slot: datetime,
     loaded_settings: LoadedSettings,
-) -> datetime:
+) -> tuple[datetime, SourceDefinition]:
     if isinstance(board_id, bool) or not isinstance(board_id, int):
         raise TypeError("board_id must be an integer")
-    if board_id != SUPPORTED_BOARD_ID:
-        raise ValueError("unsupported board")
+    source = source_for_board(board_id)
     if not isinstance(loaded_settings, LoadedSettings):
         raise TypeError("loaded_settings must be validated settings")
     if _CONFIG_VERSION.fullmatch(loaded_settings.config_version) is None:
@@ -84,7 +82,7 @@ def _validate_collection_context(
     )
     if slot != aligned:
         raise ValueError("slot must be an exact aligned KST slot")
-    return aligned
+    return aligned, source
 
 
 def _bounded_observations(items: Iterable[PostListItem]) -> list[object]:
@@ -132,14 +130,20 @@ def _validated_actual_fetch_time(fetched_at: object) -> datetime:
     return fetched_at.astimezone(UTC)
 
 
-def _is_valid_item(item: object, board_id: int) -> bool:
+def _is_valid_item(item: object, source: SourceDefinition) -> bool:
     if not isinstance(item, PostListItem):
         return False
-    if item.board_id != board_id:
+    if item.board_id != source.board_id:
         return False
     if not _is_nonnegative_integer(item.post_id, maximum=_MAX_BIGINT) or item.post_id == 0:
         return False
-    if item.analysis_unit != SUPPORTED_ANALYSIS_UNIT or item.category != SUPPORTED_CATEGORY:
+    if (
+        not isinstance(item.category, str)
+        or not item.category
+        or item.category != unicodedata.normalize("NFKC", item.category).strip()
+        or not _is_database_safe_text(item.category)
+        or item.analysis_unit != analysis_unit_for(source, item.category)
+    ):
         return False
     if (
         not isinstance(item.title, str)
@@ -197,13 +201,13 @@ def collect_board_slot(
 ) -> CollectionSummary:
     """Persist one bounded observation batch inside the caller-owned transaction."""
 
-    canonical_slot = _validate_collection_context(board_id, slot, loaded_settings)
+    canonical_slot, source = _validate_collection_context(board_id, slot, loaded_settings)
     actual_fetch_time = _validated_actual_fetch_time(fetched_at)
     observations = _bounded_observations(items)
     grouped: dict[int, list[PostListItem]] = {}
     rejected = 0
     for observation in observations:
-        if not _is_valid_item(observation, board_id):
+        if not _is_valid_item(observation, source):
             rejected += 1
             continue
         assert isinstance(observation, PostListItem)
@@ -220,7 +224,7 @@ def collect_board_slot(
             )
         )
 
-    ensure_supported_board(session)
+    ensure_supported_board(session, source)
     inserted = 0
     updated = 0
     quarantined = 0

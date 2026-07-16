@@ -17,6 +17,10 @@ collection:
   request_max_delay_seconds: 3.0
   concurrency: 1
   max_retries: 3
+  incremental_min_pages: 2
+  incremental_overlap_pages: 1
+  incremental_max_pages: 100
+  backfill_page_budget_per_cycle: 40
 ranking:
   window_days: 90
   top_n: 50
@@ -51,6 +55,10 @@ resources:
     loaded = load_settings(path)
 
     assert loaded.settings.collection.interval_hours == 6
+    assert loaded.settings.collection.incremental_min_pages == 2
+    assert loaded.settings.collection.incremental_overlap_pages == 1
+    assert loaded.settings.collection.incremental_max_pages == 100
+    assert loaded.settings.collection.backfill_page_budget_per_cycle == 40
     assert loaded.settings.ranking.top_n == 50
     assert loaded.settings.rising.normalized_weights().model_dump() == {
         "recommendation": 0.5,
@@ -66,6 +74,18 @@ def test_interval_must_divide_day(tmp_path: Path) -> None:
     path.write_text(source.replace("interval_hours: 6", "interval_hours: 5"), encoding="utf-8")
 
     with pytest.raises(ValueError, match="divide 24"):
+        load_settings(path)
+
+
+def test_incremental_minimum_must_not_exceed_maximum(tmp_path: Path) -> None:
+    source = Path("config/settings.yaml").read_text(encoding="utf-8")
+    path = tmp_path / "bad-pages.yaml"
+    path.write_text(
+        source.replace("incremental_max_pages: 100", "incremental_max_pages: 1"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="minimum.*maximum"):
         load_settings(path)
 
 

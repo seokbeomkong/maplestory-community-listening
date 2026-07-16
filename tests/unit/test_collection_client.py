@@ -19,7 +19,7 @@ class _NeverReadStream(httpx.SyncByteStream):
         raise AssertionError("an encoded response must be rejected before decompression")
 
 
-def test_fetches_only_the_supported_https_list_target_with_safe_headers() -> None:
+def test_fetches_only_an_allow_listed_paginated_https_target_with_safe_headers() -> None:
     from maple_monitor.collection.client import USER_AGENT, fetch_list_page
 
     captured: list[httpx.Request] = []
@@ -29,14 +29,12 @@ def test_fetches_only_the_supported_https_list_target_with_safe_headers() -> Non
         return httpx.Response(200, content=b"<html>bounded</html>", request=request)
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        body = fetch_list_page(2294, client=client)
+        body = fetch_list_page(5974, 3, client=client)
 
     assert body == b"<html>bounded</html>"
     assert len(captured) == 1
     request = captured[0]
-    assert request.url == httpx.URL(
-        "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
-    )
+    assert request.url == httpx.URL("https://www.inven.co.kr/board/maple/5974?p=3")
     assert request.headers["user-agent"] == USER_AGENT
     assert "Mozilla" not in USER_AGENT
     assert "text/html" in request.headers["accept"]
@@ -49,7 +47,21 @@ def test_fetches_only_the_supported_https_list_target_with_safe_headers() -> Non
     }
 
 
-def test_rejects_an_unsupported_board_before_transport_use() -> None:
+@pytest.mark.parametrize(
+    ("board_id", "page", "message"),
+    [
+        (9999, 1, "unsupported board"),
+        (True, 1, "board"),
+        (2294, False, "page"),
+        (2294, 0, "page"),
+        (2294, 100_001, "page"),
+    ],
+)
+def test_rejects_invalid_targets_before_transport_use(
+    board_id: int,
+    page: int,
+    message: str,
+) -> None:
     from maple_monitor.collection.client import InvalidListPageTarget, fetch_list_page
 
     calls = 0
@@ -60,8 +72,8 @@ def test_rejects_an_unsupported_board_before_transport_use() -> None:
         return httpx.Response(200, content=b"unexpected", request=request)
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        with pytest.raises(InvalidListPageTarget, match="unsupported board"):
-            fetch_list_page(2295, client=client)
+        with pytest.raises(InvalidListPageTarget, match=message):
+            fetch_list_page(board_id, page, client=client)
 
     assert calls == 0
 
@@ -85,7 +97,7 @@ def test_refuses_redirects_without_requesting_the_redirect_target() -> None:
             fetch_list_page(2294, client=client)
 
     assert requested == [
-        "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
+        "https://www.inven.co.kr/board/maple/2294?p=1"
     ]
     assert secret_target not in str(caught.value)
     assert "token" not in str(caught.value)
@@ -122,6 +134,28 @@ def test_redacts_non_success_response_body() -> None:
 
     assert leaked_body not in str(caught.value)
     assert "503" not in str(caught.value)
+
+
+def test_rejects_a_response_url_change_before_returning_body() -> None:
+    from maple_monitor.collection.client import ListPageResponseError, fetch_list_page
+
+    leaked_body = b"must-not-be-returned"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=leaked_body, request=request)
+
+    def change_response_url(response: httpx.Response) -> None:
+        response.request = httpx.Request(
+            "GET",
+            "https://www.inven.co.kr/board/maple/5974?p=4",
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(respond),
+        event_hooks={"response": [change_response_url]},
+    ) as client:
+        with pytest.raises(ListPageResponseError, match="target"):
+            fetch_list_page(5974, 3, client=client)
 
 
 @pytest.mark.parametrize(

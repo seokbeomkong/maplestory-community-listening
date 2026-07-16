@@ -54,6 +54,7 @@ def _title_markup(
 
 def _article_row(
     *,
+    board_id: int = 2294,
     post_id: int = 900010,
     headers: tuple[str, ...] = HEADERS,
     href: str | None = None,
@@ -70,7 +71,7 @@ def _article_row(
     values = {
         "번호": str(post_id),
         "제목": _title_markup(
-            href=href or f"/board/maple/2294/{post_id}",
+            href=href or f"/board/maple/{board_id}/{post_id}",
             category=category,
             title=title,
             comment_marker=comment_marker,
@@ -268,19 +269,44 @@ def test_ignores_an_unrelated_partial_header_table_before_the_board_table() -> N
     assert item.post_id == 900010
 
 
-def test_skips_recognized_non_hero_categories_after_structural_validation() -> None:
+def test_maps_job_category_and_skips_all_three_exclusions() -> None:
     html = _page(
         rows=(
             _article_row(post_id=900011, category="팁/정보", row_class="notice all"),
-            _article_row(post_id=900012, category="팔라딘"),
-            _article_row(post_id=900013, category="히어로"),
+            _article_row(post_id=900012, category="핑크빈"),
+            _article_row(post_id=900013, category="예티"),
+            _article_row(post_id=900014, category="히어로"),
         )
     )
 
     [item] = parse_list_page(2294, html, FETCHED_AT)
 
-    assert item.post_id == 900013
+    assert item.post_id == 900014
     assert item.analysis_unit == "hero"
+
+
+@pytest.mark.parametrize(
+    ("board_id", "category", "analysis_unit"),
+    [
+        (5974, "수다", "free"),
+        (2300, "아이템", "qna"),
+        (2304, "사냥", "tips"),
+    ],
+)
+def test_non_job_sources_keep_visible_category_and_use_fixed_analysis_unit(
+    board_id: int,
+    category: str,
+    analysis_unit: str,
+) -> None:
+    [item] = parse_list_page(
+        board_id,
+        _page(rows=(_article_row(board_id=board_id, category=category),)),
+        FETCHED_AT,
+    )
+
+    assert item.board_id == board_id
+    assert item.category == category
+    assert item.analysis_unit == analysis_unit
 
 
 @pytest.mark.parametrize(
@@ -309,12 +335,18 @@ def test_malformed_excluded_rows_cannot_hide_source_truncation(
 
 
 def test_rejects_unknown_category_instead_of_silently_creating_a_unit() -> None:
-    with pytest.raises(InvalidSourcePage, match="category"):
-        parse_list_page(
-            2294,
-            _page(rows=(_article_row(category="알수없음"),)),
-            FETCHED_AT,
-        )
+    items = parse_list_page(
+        2294,
+        _page(
+            rows=(
+                _article_row(post_id=900010, category="알수없음"),
+                _article_row(post_id=900011, category="히어로"),
+            )
+        ),
+        FETCHED_AT,
+    )
+
+    assert [item.post_id for item in items] == [900011]
 
 
 def test_rejects_truncated_article_row() -> None:

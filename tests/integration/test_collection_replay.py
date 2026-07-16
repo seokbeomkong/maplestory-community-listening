@@ -74,6 +74,32 @@ def _collect(
     )
 
 
+def test_collect_board_slot_creates_non_job_board_metadata(db_session: Session) -> None:
+    post_id = 910075
+    item = PostListItem(
+        board_id=5974,
+        post_id=post_id,
+        analysis_unit="free",
+        category="수다",
+        title="자유 게시판 검증",
+        published_at=SLOT,
+        views=100,
+        recommendations=2,
+        comments=3,
+        source_url=f"https://www.inven.co.kr/board/maple/5974/{post_id}",
+        is_notice=False,
+        is_ad=False,
+    )
+
+    summary = _collect(db_session, [item], board_id=5974)
+
+    assert summary == CollectionSummary(inserted=1, updated=0, quarantined=0, rejected=0)
+    assert db_session.execute(
+        text("SELECT name, kind FROM boards WHERE id = :board_id"),
+        {"board_id": 5974},
+    ).one() == ("자유 게시판", "free")
+
+
 def _board_exists(db_engine: Engine) -> bool:
     with Session(db_engine) as inspection:
         return (
@@ -592,7 +618,7 @@ def test_title_quarantine_is_replay_safe_and_creates_no_detail_work(
 @pytest.mark.parametrize(
     ("board_id", "slot", "settings", "message"),
     [
-        (2295, SLOT, None, "unsupported board"),
+        (9999, SLOT, None, "unsupported board"),
         (2294, datetime(2026, 7, 14, 6, 20), None, "timezone-aware"),
         (
             2294,

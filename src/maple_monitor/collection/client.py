@@ -5,12 +5,10 @@ from typing import Final
 
 import httpx
 
+from maple_monitor.sources import source_for_board
 
-SUPPORTED_BOARD_ID: Final = 2294
-CANONICAL_LIST_URL: Final = (
-    "https://www.inven.co.kr/board/maple/2294?category=%ED%9E%88%EC%96%B4%EB%A1%9C"
-)
 MAX_LIST_RESPONSE_BYTES: Final = 512_000
+MAX_LIST_PAGE: Final = 100_000
 USER_AGENT: Final = "maple-inven-monitor/0.1 (bounded public metadata collector)"
 REQUEST_TIMEOUT: Final = httpx.Timeout(10.0, connect=5.0, write=5.0, pool=5.0)
 
@@ -46,10 +44,17 @@ class ListPageTooLargeError(ListPageResponseError):
 
 
 def _validate_board_id(board_id: int) -> None:
-    if isinstance(board_id, bool) or not isinstance(board_id, int):
-        raise InvalidListPageTarget("board must be the supported board identifier")
-    if board_id != SUPPORTED_BOARD_ID:
-        raise InvalidListPageTarget("unsupported board")
+    try:
+        source_for_board(board_id)
+    except TypeError:
+        raise InvalidListPageTarget("board must be an allow-listed board identifier") from None
+    except ValueError:
+        raise InvalidListPageTarget("unsupported board") from None
+
+
+def _validate_page(page: int) -> None:
+    if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= MAX_LIST_PAGE:
+        raise InvalidListPageTarget("page must be between 1 and 100000")
 
 
 def _validate_content_length(value: str | None) -> None:
@@ -78,7 +83,12 @@ def _read_bounded(response: httpx.Response) -> bytes:
     return bytes(body)
 
 
-def fetch_list_page(board_id: int, *, client: httpx.Client | None = None) -> bytes:
+def fetch_list_page(
+    board_id: int,
+    page: int = 1,
+    *,
+    client: httpx.Client | None = None,
+) -> bytes:
     """Fetch one public board list with a fixed target and bounded response body.
 
     Redirects are deliberately refused. Public exceptions contain only stable local
@@ -86,7 +96,8 @@ def fetch_list_page(board_id: int, *, client: httpx.Client | None = None) -> byt
     """
 
     _validate_board_id(board_id)
-    target = httpx.URL(CANONICAL_LIST_URL)
+    _validate_page(page)
+    target = httpx.URL(f"https://www.inven.co.kr/board/maple/{board_id}", params={"p": page})
     owned_client = httpx.Client(follow_redirects=False, trust_env=False) if client is None else None
     client_context = owned_client if owned_client is not None else nullcontext(client)
 

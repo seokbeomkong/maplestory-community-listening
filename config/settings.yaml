@@ -5,6 +5,10 @@ collection:
   request_max_delay_seconds: 3.0
   concurrency: 1
   max_retries: 3
+  incremental_min_pages: 2
+  incremental_overlap_pages: 1
+  incremental_max_pages: 100
+  backfill_page_budget_per_cycle: 40
 ranking:
   window_days: 90
   top_n: 50

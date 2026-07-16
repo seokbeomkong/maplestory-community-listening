@@ -8,16 +8,17 @@ from sqlalchemy.orm import Session
 
 from maple_monitor.collection.types import PostListItem
 from maple_monitor.models import Board, Post, PostMetricSnapshot
+from maple_monitor.sources import SourceDefinition
 
 
 class SnapshotConfigConflict(RuntimeError):
     """Raised when a snapshot slot is already pinned to another configuration."""
 
 
-def ensure_supported_board(session: Session) -> None:
+def ensure_supported_board(session: Session, source: SourceDefinition) -> None:
     statement = (
         insert(Board)
-        .values(id=2294, name="전사", kind="job")
+        .values(id=source.board_id, name=source.name, kind=source.kind)
         .on_conflict_do_nothing(index_elements=[Board.id])
     )
     session.execute(statement)
