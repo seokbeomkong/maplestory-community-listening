@@ -5,10 +5,25 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 from maple_monitor.dashboard.queries import load_cumulative_top
+from maple_monitor.sources import JOB_ANALYSIS_UNITS, SOURCES
 
 
 _TABLE_COLUMNS = ["rank", "title", "metric_value", "published_at", "source_url"]
-_ANALYSIS_UNIT_LABELS = {"hero": "히어로"}
+
+def _analysis_unit_labels() -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for source in SOURCES:
+        if source.kind == "job":
+            for category, analysis_unit in JOB_ANALYSIS_UNITS[source.board_id].items():
+                labels[analysis_unit] = (
+                    f"{source.name} 기타" if analysis_unit.endswith("_other") else category
+                )
+        elif source.fixed_analysis_unit is not None:
+            labels[source.fixed_analysis_unit] = source.name
+    return labels
+
+
+_ANALYSIS_UNIT_LABELS = _analysis_unit_labels()
 _METRIC_LABELS = {
     "recommendations": "추천",
     "comments": "댓글",
@@ -28,7 +43,7 @@ def render(engine: object) -> None:
     st.caption("최근 90일 누적 순위 · 급상승 순위와 별도 집계")
     analysis_unit = st.selectbox(
         "분석 단위",
-        ["hero"],
+        list(_ANALYSIS_UNIT_LABELS),
         format_func=_ANALYSIS_UNIT_LABELS.__getitem__,
         key="cumulative_unit",
     )

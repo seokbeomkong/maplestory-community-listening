@@ -56,6 +56,16 @@ acquire_export_lock() {
   flock -x 9
 }
 
+add_utf8_bom() {
+  local path="$1"
+  local temp
+
+  temp="$(mktemp "${path}.utf8-sig-XXXXXXXX")"
+  printf '\357\273\277' >"$temp"
+  cat -- "$path" >>"$temp"
+  mv -f -- "$temp" "$path"
+}
+
 update_latest_download() {
   local target="$1"
   local suffix="$2"
@@ -186,6 +196,7 @@ SQL
 
   for csv_file in "${CSV_FILES[@]}"; do
     "${COMPOSE[@]}" cp "postgres:$container_temp_dir/$csv_file" "$staging_dir/$csv_file"
+    add_utf8_bom "$staging_dir/$csv_file"
   done
   remove_container_temp
 

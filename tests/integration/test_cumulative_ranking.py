@@ -326,6 +326,57 @@ def test_refresh_materializes_separate_top_fifty_per_metric(db_session: Session)
     ]
 
 
+def test_refresh_materializes_rankings_for_every_available_analysis_unit(
+    db_session: Session,
+) -> None:
+    from maple_monitor.ranking.cumulative import refresh_cumulative
+
+    _seed_basic_rank_fixture(db_session)
+    db_session.execute(
+        text(
+            "INSERT INTO posts "
+            "(board_id, post_id, analysis_unit, title, published_at, source_url) "
+            "VALUES (5501, 5599999, 'paladin', 'paladin post', :published_at, "
+            "'https://example.invalid/posts/5599999')"
+        ),
+        {"published_at": AS_OF - timedelta(days=1)},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO post_metric_snapshots "
+            "(board_id, post_id, observed_at_slot_kst, views, recommendations, comments, "
+            "config_version) VALUES "
+            "(5501, 5599999, :slot, 321, 45, 67, :config_version)"
+        ),
+        {"slot": AS_OF - timedelta(hours=1), "config_version": CONFIG_VERSION},
+    )
+
+    inserted = refresh_cumulative(
+        db_session,
+        AS_OF,
+        window_days=90,
+        top_n=50,
+        config_version=CONFIG_VERSION,
+    )
+
+    assert inserted == 153
+    assert db_session.execute(
+        text(
+            "SELECT analysis_unit, metric, count(*) "
+            "FROM cumulative_top_posts WHERE as_of_slot_kst = :slot "
+            "GROUP BY analysis_unit, metric ORDER BY analysis_unit, metric"
+        ),
+        {"slot": AS_OF},
+    ).all() == [
+        ("hero", "comments", 50),
+        ("hero", "recommendations", 50),
+        ("hero", "views", 50),
+        ("paladin", "comments", 1),
+        ("paladin", "recommendations", 1),
+        ("paladin", "views", 1),
+    ]
+
+
 def test_refresh_enforces_window_quarantine_ordering_replay_and_safe_union(
     db_session: Session,
 ) -> None:
@@ -443,12 +494,12 @@ def test_refresh_enforces_window_quarantine_ordering_replay_and_safe_union(
     assert (
         db_session.execute(
             text(
-                "SELECT post_id FROM cumulative_top_posts "
+                "SELECT count(*) FROM cumulative_top_posts "
                 "WHERE analysis_unit = 'paladin' AND as_of_slot_kst = :slot"
             ),
             {"slot": fixture.as_of},
         ).scalar_one()
-        == fixture.other_unit_post
+        == 0
     )
 
 

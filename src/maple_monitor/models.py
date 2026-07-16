@@ -208,6 +208,10 @@ Index(
     CumulativeTopPost.as_of_slot_kst.desc(),
     CumulativeTopPost.rank,
 )
+Index(
+    "cumulative_top_posts_slot_idx",
+    CumulativeTopPost.as_of_slot_kst,
+)
 
 
 class SecurityQuarantine(Base):

@@ -60,17 +60,21 @@ def test_cumulative_page_exercises_all_metric_choices(monkeypatch) -> None:
     page = AppTest.from_function(_render_app).run()
     assert calls == [("hero", "recommendations")]
     assert page.selectbox[0].value == "hero"
-    assert page.selectbox[0].options == ["히어로"]
+    assert "히어로" in page.selectbox[0].options
+    assert "팔라딘" in page.selectbox[0].options
+    assert "자유 게시판" in page.selectbox[0].options
     assert page.selectbox[1].value == "recommendations"
     assert page.selectbox[1].options == ["추천", "댓글", "조회"]
 
+    page.selectbox[0].select("paladin").run()
     page.selectbox[1].select("comments").run()
     page.selectbox[1].select("views").run()
 
     assert calls == [
         ("hero", "recommendations"),
-        ("hero", "comments"),
-        ("hero", "views"),
+        ("paladin", "recommendations"),
+        ("paladin", "comments"),
+        ("paladin", "views"),
     ]
 
 

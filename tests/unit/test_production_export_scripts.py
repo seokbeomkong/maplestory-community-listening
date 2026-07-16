@@ -223,6 +223,11 @@ def test_bash_helper_has_atomic_read_only_export_contract() -> None:
     assert 'cp "postgres:$container_temp_dir/$csv_file"' in script
     assert "sha256sum" in script
     assert "SHA256SUMS.txt" in script
+    assert "add_utf8_bom" in script
+    assert "\\357\\273\\277" in script
+    assert script.index("add_utf8_bom \"$staging_dir/$csv_file\"") < script.index(
+        "sha256sum"
+    )
     assert 'mv -T -- "$staging_dir" "$release_dir"' in script
     assert 'latest_work_dir="$(mktemp -d' in script
     assert 'rm -rf -- "$latest_work_dir"' in script

@@ -8,7 +8,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-_ANALYSIS_UNIT: Final = "hero"
 _CONFIG_VERSION_PATTERN: Final = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_WINDOW_DAYS: Final = 365
 _MAX_TOP_N: Final = 500
@@ -38,8 +37,7 @@ _RANKING_INSERT = text(
         ORDER BY snapshot.observed_at_slot_kst DESC
         LIMIT 1
       ) AS latest ON TRUE
-      WHERE post.analysis_unit = :analysis_unit
-        AND post.is_notice IS FALSE
+      WHERE post.is_notice IS FALSE
         AND post.is_ad IS FALSE
         AND post.published_at >= :cutoff
         AND post.published_at <= :as_of_slot
@@ -143,7 +141,7 @@ def refresh_cumulative(
     top_n: int,
     config_version: str,
 ) -> int:
-    """Replace the Hero cumulative rankings inside the caller-owned transaction."""
+    """Replace every available analysis unit's cumulative rankings for one slot."""
 
     validated_window_days = _bounded_integer(
         window_days,
@@ -162,16 +160,12 @@ def refresh_cumulative(
         {"lock_key": _ADVISORY_LOCK_KEY},
     )
     session.execute(
-        text(
-            "DELETE FROM cumulative_top_posts "
-            "WHERE analysis_unit = :analysis_unit AND as_of_slot_kst = :as_of_slot"
-        ),
-        {"analysis_unit": _ANALYSIS_UNIT, "as_of_slot": normalized_as_of},
+        text("DELETE FROM cumulative_top_posts WHERE as_of_slot_kst = :as_of_slot"),
+        {"as_of_slot": normalized_as_of},
     )
     inserted_rows = session.execute(
         _RANKING_INSERT,
         {
-            "analysis_unit": _ANALYSIS_UNIT,
             "as_of_slot": normalized_as_of,
             "cutoff": cutoff,
             "top_n": validated_top_n,
@@ -189,12 +183,10 @@ def refresh_cumulative(
             "jsonb_build_object('board_id', ranked.board_id, 'post_id', ranked.post_id), "
             ":available_at "
             "FROM cumulative_top_posts AS ranked "
-            "WHERE ranked.analysis_unit = :analysis_unit "
-            "AND ranked.as_of_slot_kst = :as_of_slot "
+            "WHERE ranked.as_of_slot_kst = :as_of_slot "
             "ON CONFLICT (task_key) DO NOTHING"
         ),
         {
-            "analysis_unit": _ANALYSIS_UNIT,
             "as_of_slot": normalized_as_of,
             "available_at": normalized_as_of,
         },

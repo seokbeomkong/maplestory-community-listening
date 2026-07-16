@@ -534,6 +534,16 @@ def test_work_item_defaults_and_claim_index(db_session: Session) -> None:
     assert index["column_names"] == ["state", "priority", "available_at", "id"]
 
 
+def test_cumulative_rankings_have_slot_leading_index(db_session: Session) -> None:
+    index = next(
+        item
+        for item in inspect(db_session.bind).get_indexes("cumulative_top_posts")
+        if item["name"] == "cumulative_top_posts_slot_idx"
+    )
+
+    assert index["column_names"] == ["as_of_slot_kst"]
+
+
 def test_migration_upgrade_downgrade_upgrade_round_trip(database_url: str) -> None:
     source_url = make_url(database_url)
     database_name = f"maple_monitor_roundtrip_{uuid4().hex}"
