@@ -219,3 +219,28 @@ def test_failed_backfill_page_does_not_advance_persisted_state(db_engine: Engine
         assert (state.next_page, state.checkpoint_post_id, state.complete) == (9, 991234, False)
     finally:
         _clear_backfill_state(db_engine)
+
+
+def test_backfill_reserves_budget_before_fetching(db_engine: Engine) -> None:
+    _clear_backfill_state(db_engine)
+    source = source_for_board(5974)
+    events: list[str] = []
+    reservations = iter((True, False))
+    try:
+        summary = run_backfill_budget(
+            db_engine,
+            SLOT,
+            load_settings(Path("config/settings.yaml")),
+            sources=(source,),
+            page_budget=2,
+            reserve_page=lambda: events.append("reserve") or next(reservations),
+            fetch_page=lambda board_id, page: events.append("fetch") or b"page",
+            parse_page=lambda board_id, html, fetched_at: [],
+            fetched_at=lambda: SLOT,
+            wait_between_pages=lambda: None,
+        )
+
+        assert summary.pages_fetched == 1
+        assert events == ["reserve", "fetch", "reserve"]
+    finally:
+        _clear_backfill_state(db_engine)

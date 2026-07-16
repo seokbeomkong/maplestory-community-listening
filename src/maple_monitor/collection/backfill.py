@@ -89,6 +89,7 @@ def run_backfill_budget(
     parse_page: Callable[[int, bytes, datetime], list[PostListItem]],
     fetched_at: Callable[[], datetime],
     wait_between_pages: Callable[[], None],
+    reserve_page: Callable[[], bool] | None = None,
     sources: Sequence[SourceDefinition] = SOURCES,
     page_budget: int | None = None,
 ) -> BackfillBudgetSummary:
@@ -110,6 +111,9 @@ def run_backfill_budget(
             if pages_fetched >= budget:
                 break
             source, page = cursors[source_key]
+            if reserve_page is not None and not reserve_page():
+                cursors.clear()
+                break
             if pages_fetched:
                 wait_between_pages()
             pages_fetched += 1

@@ -70,6 +70,12 @@ def _install_cycle_fakes(monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], li
         "run_backfill_budget",
         lambda *args, **kwargs: BackfillBudgetSummary(0, 0, ()),
     )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_backfill_cycle",
+        lambda *args, **kwargs: BackfillBudgetSummary(0, 0, ()),
+        raising=False,
+    )
     monkeypatch.setattr(scheduler, "refresh_cumulative", lambda *args, **kwargs: 9)
     return claimed, finished
 
@@ -194,3 +200,70 @@ def test_retry_wrapper_does_not_retry_invalid_configuration(
     )
     with pytest.raises(ValueError, match="invalid configuration"):
         scheduler.collect_and_rank_with_retries(Path("config/settings.yaml"))
+
+
+def test_ranking_retry_does_not_replay_completed_backfill_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    durable_backfill_cycle = scheduler._run_backfill_cycle
+    _install_cycle_fakes(monkeypatch)
+    monkeypatch.setattr(scheduler, "_run_backfill_cycle", durable_backfill_cycle)
+    monkeypatch.setattr(scheduler, "SOURCES", ())
+
+    backfill_run_id = UUID(int=99)
+    pages_consumed = 0
+    backfill_succeeded = False
+    fetches: list[int] = []
+    ranking_attempts = 0
+
+    def claim(*args: object, **kwargs: object) -> RunClaim:
+        assert kwargs["job_type"] == "metadata-backfill"
+        return RunClaim(
+            backfill_run_id,
+            "already_succeeded" if backfill_succeeded else "acquired",
+            1,
+            0,
+            pages_consumed,
+        )
+
+    def reserve(*args: object, **kwargs: object) -> int | None:
+        nonlocal pages_consumed
+        if pages_consumed >= int(kwargs["page_budget"]):
+            return None
+        pages_consumed += 1
+        return pages_consumed
+
+    def backfill(*args: object, **kwargs: object) -> BackfillBudgetSummary:
+        reserve_page = kwargs["reserve_page"]
+        while reserve_page():
+            fetches.append(len(fetches) + 1)
+        return BackfillBudgetSummary(len(fetches), 0, ())
+
+    def finish(*args: object, **kwargs: object) -> None:
+        nonlocal backfill_succeeded
+        assert kwargs["run_id"] == backfill_run_id
+        assert kwargs["status"] == "succeeded"
+        backfill_succeeded = True
+
+    def rank(*args: object, **kwargs: object) -> int:
+        nonlocal ranking_attempts
+        ranking_attempts += 1
+        if ranking_attempts == 1:
+            raise scheduler.SQLAlchemyError("ranking failed")
+        return 9
+
+    monkeypatch.setattr(scheduler, "claim_run_slot", claim)
+    monkeypatch.setattr(scheduler, "reserve_run_page", reserve, raising=False)
+    monkeypatch.setattr(scheduler, "run_backfill_budget", backfill)
+    monkeypatch.setattr(scheduler, "finish_run", finish)
+    monkeypatch.setattr(scheduler, "refresh_cumulative", rank)
+
+    result = scheduler.collect_and_rank_with_retries(
+        Path("config/settings.yaml"),
+        sleep=lambda delay: None,
+        random_delay=lambda low, high: low,
+    )
+
+    assert result.ranking_rows == 9
+    assert ranking_attempts == 2
+    assert len(fetches) == 40

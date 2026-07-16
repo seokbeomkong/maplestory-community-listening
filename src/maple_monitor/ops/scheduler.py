@@ -14,7 +14,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
-from maple_monitor.collection.backfill import run_backfill_budget
+from maple_monitor.collection.backfill import BackfillBudgetSummary, run_backfill_budget
 from maple_monitor.collection.client import ListPageClientError, fetch_list_page
 from maple_monitor.collection.pagination import scan_incremental_pages
 from maple_monitor.collection.parser import InvalidSourcePage, parse_list_page
@@ -31,6 +31,7 @@ from maple_monitor.ops.run_control import (
     collector_lock_key,
     finish_run,
     release_collector_lock,
+    reserve_run_page,
     try_collector_lock,
 )
 from maple_monitor.ranking.cumulative import refresh_cumulative
@@ -45,6 +46,7 @@ _RETRYABLE_ERRORS: Final = (
     SQLAlchemyError,
     SnapshotConfigConflict,
 )
+_BACKFILL_JOB_TYPE: Final = "metadata-backfill"
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,98 @@ def _cycle_status(
     return "failed"
 
 
+def _run_backfill_cycle(
+    engine: Engine,
+    slot: datetime,
+    started_at: datetime,
+    loaded: LoadedSettings,
+) -> BackfillBudgetSummary:
+    """Spend the slot's durable backfill allowance under one advisory lock."""
+
+    lock_key = collector_lock_key(_BACKFILL_JOB_TYPE, slot)
+    lock_connection = engine.connect()
+    lock_acquired = False
+    try:
+        lock_acquired = try_collector_lock(lock_connection, lock_key)
+        if not lock_acquired:
+            return BackfillBudgetSummary(0, 0, (_BACKFILL_JOB_TYPE,))
+
+        with session_scope(engine) as session:
+            claim = claim_run_slot(
+                session,
+                job_type=_BACKFILL_JOB_TYPE,
+                slot=slot,
+                config_version=loaded.config_version,
+                started_at=started_at,
+            )
+        if claim.disposition == "already_succeeded":
+            return BackfillBudgetSummary(0, 0, ())
+
+        page_budget = loaded.settings.collection.backfill_page_budget_per_cycle
+        pages_consumed = claim.pages_consumed
+
+        def reserve_page() -> bool:
+            nonlocal pages_consumed
+            with session_scope(engine) as session:
+                reserved = reserve_run_page(
+                    session,
+                    run_id=claim.run_id,
+                    page_budget=page_budget,
+                )
+            if reserved is None:
+                return False
+            pages_consumed = reserved
+            return True
+
+        try:
+            summary = run_backfill_budget(
+                engine,
+                slot,
+                loaded,
+                fetch_page=fetch_list_page,
+                parse_page=parse_list_page,
+                fetched_at=current_kst_time,
+                wait_between_pages=lambda: _wait_for_request(loaded),
+                reserve_page=reserve_page,
+            )
+        except _RETRYABLE_ERRORS:
+            with session_scope(engine) as session:
+                finish_run(
+                    session,
+                    run_id=claim.run_id,
+                    status="failed",
+                    finished_at=current_kst_time(),
+                    diagnostics={
+                        "attempts": claim.attempts,
+                        "pages_consumed": pages_consumed,
+                        "error": "backfill_failed",
+                    },
+                )
+            raise
+
+        with session_scope(engine) as session:
+            finish_run(
+                session,
+                run_id=claim.run_id,
+                status="succeeded",
+                finished_at=current_kst_time(),
+                diagnostics={
+                    "attempts": claim.attempts,
+                    "pages_consumed": pages_consumed,
+                    "accepted": summary.accepted,
+                    "failed_sources": list(summary.failed_sources),
+                },
+            )
+        return summary
+    finally:
+        if lock_acquired:
+            try:
+                release_collector_lock(lock_connection, lock_key)
+            except SQLAlchemyError:
+                pass
+        lock_connection.close()
+
+
 def collect_and_rank_once(settings_path: Path) -> CollectionCycleSummary:
     """Collect independently idempotent sources, backfill, then rank once."""
 
@@ -241,15 +335,7 @@ def collect_and_rank_once(settings_path: Path) -> CollectionCycleSummary:
         results = tuple(
             _collect_source(engine, source, slot, started_at, loaded) for source in SOURCES
         )
-        backfill = run_backfill_budget(
-            engine,
-            slot,
-            loaded,
-            fetch_page=fetch_list_page,
-            parse_page=parse_list_page,
-            fetched_at=current_kst_time,
-            wait_between_pages=lambda: _wait_for_request(loaded),
-        )
+        backfill = _run_backfill_cycle(engine, slot, started_at, loaded)
         with session_scope(engine) as session:
             ranking_rows = refresh_cumulative(
                 session,

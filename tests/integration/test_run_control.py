@@ -7,13 +7,89 @@ from sqlalchemy.orm import Session
 
 from maple_monitor.ops.health import collector_is_healthy
 from maple_monitor.ops.run_control import (
+    claim_run_slot,
     collector_lock_key,
+    finish_run,
     release_collector_lock,
+    reserve_run_page,
     try_collector_lock,
 )
 
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+def test_backfill_page_reservations_survive_crash_reacquisition(
+    db_engine: Engine,
+) -> None:
+    slot = datetime(2026, 7, 16, 12, 20, tzinfo=KST)
+    job_type = "metadata-backfill"
+    try:
+        with Session(db_engine) as session:
+            first = claim_run_slot(
+                session,
+                job_type=job_type,
+                slot=slot,
+                config_version="a" * 64,
+                started_at=slot,
+            )
+            session.commit()
+
+        with Session(db_engine) as session:
+            assert reserve_run_page(session, run_id=first.run_id, page_budget=2) == 1
+            session.commit()
+
+        with Session(db_engine) as session:
+            reacquired = claim_run_slot(
+                session,
+                job_type=job_type,
+                slot=slot,
+                config_version="a" * 64,
+                started_at=slot + timedelta(minutes=1),
+            )
+            session.commit()
+
+        assert reacquired.run_id == first.run_id
+        assert reacquired.attempts == 2
+        assert reacquired.pages_consumed == 1
+
+        with Session(db_engine) as session:
+            assert reserve_run_page(session, run_id=first.run_id, page_budget=2) == 2
+            assert reserve_run_page(session, run_id=first.run_id, page_budget=2) is None
+            finish_run(
+                session,
+                run_id=first.run_id,
+                status="partial",
+                finished_at=slot + timedelta(minutes=2),
+                diagnostics={"attempts": 2, "pages_consumed": 2},
+            )
+            session.commit()
+
+        with Session(db_engine) as session:
+            persisted = session.execute(
+                text(
+                    "SELECT status, diagnostics->>'pages_consumed' AS pages_consumed "
+                    "FROM collection_runs WHERE id = :run_id"
+                ),
+                {"run_id": first.run_id},
+            ).one()
+        assert persisted == ("partial", "2")
+    finally:
+        with db_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM run_slots WHERE job_type = :job_type "
+                    "AND scheduled_at_slot_kst = :slot"
+                ),
+                {"job_type": job_type, "slot": slot},
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM collection_runs WHERE job_type = :job_type "
+                    "AND scheduled_at_slot_kst = :slot"
+                ),
+                {"job_type": job_type, "slot": slot},
+            )
 
 
 def test_collector_lock_serializes_independent_database_connections(
