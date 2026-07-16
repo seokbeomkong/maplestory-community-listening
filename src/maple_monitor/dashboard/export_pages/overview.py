@@ -26,17 +26,26 @@ with st.container(horizontal=True):
     st.metric("수집 게시물", f"{len(bundle.posts):,}건", border=True)
     st.metric("분석 단위", f"{bundle.posts['analysis_unit'].nunique():,}개", border=True)
     st.metric("수집 성공률", f"{health.success_rate:.0%}", border=True)
-    st.metric("실패 실행", f"{health.failed_runs:,}건", border=True)
+    degraded_runs = health.failed_runs + health.partial_runs
+    st.metric("실패·부분 실행", f"{degraded_runs:,}건", border=True)
 
 st.subheader("직업 게시판 현황")
 comparison = job_comparison(bundle.posts)
 if comparison.empty:
     st.caption("비교할 직업 게시물이 없습니다.")
 else:
-    chart = comparison.head(12).rename(
-        columns={"job": "직업", "comments_per_post": "게시물당 댓글"}
-    )
-    st.bar_chart(chart, x="직업", y="게시물당 댓글", horizontal=True)
+    for effective_hours, cohort in comparison.head(12).groupby(
+        "effective_hours", sort=True
+    ):
+        period_days = int(effective_hours) // 24
+        if cohort["fallback_reason"].notna().any():
+            st.caption(f"7일 표본 부족으로 {period_days}일 확장 · {len(cohort)}개 직업")
+        else:
+            st.caption(f"{period_days}일 기준 · {len(cohort)}개 직업")
+        chart = cohort.rename(
+            columns={"job": "직업", "comments_per_post": "게시물당 댓글"}
+        )
+        st.bar_chart(chart, x="직업", y="게시물당 댓글", horizontal=True)
     st.caption("게시판 규모 차이를 줄이기 위해 게시물당 댓글을 함께 봅니다.")
 
 st.subheader("자유게시판 주요 게시물")

@@ -87,6 +87,45 @@ _INTEGER_COLUMNS: Final = {
     "collection_runs.csv": (),
     "security_quarantine.csv": ("risk_score",),
 }
+_NON_NEGATIVE_INTEGER_COLUMNS: Final = {
+    name: columns for name, columns in _INTEGER_COLUMNS.items()
+}
+_REQUIRED_TEXT_COLUMNS: Final = {
+    "latest_post_metrics.csv": (
+        "board_name",
+        "analysis_unit",
+        "title",
+        "source_url",
+        "current_category",
+        "config_version",
+    ),
+    "cumulative_top50.csv": (
+        "analysis_unit",
+        "metric",
+        "title",
+        "source_url",
+        "config_version",
+    ),
+    "collection_runs.csv": ("id", "job_type", "status", "config_version"),
+    "security_quarantine.csv": (
+        "id",
+        "source_kind",
+        "source_ref",
+        "content_hash",
+        "findings",
+        "review_state",
+    ),
+}
+_REQUIRED_DATETIME_COLUMNS: Final = {
+    "latest_post_metrics.csv": (
+        "published_at",
+        "observed_at_slot_kst",
+        "observed_at_actual",
+    ),
+    "cumulative_top50.csv": ("as_of_slot_kst",),
+    "collection_runs.csv": ("scheduled_at_slot_kst",),
+    "security_quarantine.csv": ("quarantined_at",),
+}
 _DUPLICATE_KEYS: Final = {
     "latest_post_metrics.csv": ("board_id", "post_id"),
     "cumulative_top50.csv": ("analysis_unit", "metric", "as_of_slot_kst", "rank"),
@@ -144,30 +183,46 @@ def _approved_source_url(value: object) -> str:
 
 def _read_typed_csv(archive: ZipFile, name: str) -> pd.DataFrame:
     try:
-        frame = pd.read_csv(BytesIO(archive.read(name)), encoding="utf-8-sig")
+        frame = pd.read_csv(
+            BytesIO(archive.read(name)), encoding="utf-8-sig", dtype="string"
+        )
     except (UnicodeDecodeError, pd.errors.ParserError) as exc:
         raise ExportArchiveError(f"{name} is not a valid UTF-8 CSV") from exc
     required = list(_SCHEMAS[name])
     if frame.columns.tolist() != required:
         raise ExportArchiveError(f"{name} schema does not match the export contract")
 
+    for column in _REQUIRED_TEXT_COLUMNS[name]:
+        invalid = frame[column].isna() | frame[column].astype("string").str.strip().eq("")
+        if invalid.any():
+            raise ExportArchiveError(f"{name}.{column} must not be blank")
+
     for column in _INTEGER_COLUMNS[name]:
         if frame.empty and column in frame:
             frame[column] = frame[column].astype("Int64")
             continue
-        try:
-            frame[column] = pd.to_numeric(frame[column], errors="raise").astype("int64")
-        except (TypeError, ValueError) as exc:
-            raise ExportArchiveError(f"{name}.{column} must contain integers") from exc
+        raw = frame[column].str.strip()
+        negative = raw.str.fullmatch(r"-\d+").fillna(False)
+        if column in _NON_NEGATIVE_INTEGER_COLUMNS[name] and negative.any():
+            raise ExportArchiveError(f"{name}.{column} must be non-negative")
+        integral = raw.str.fullmatch(r"\d+").fillna(False)
+        if not integral.all():
+            raise ExportArchiveError(f"{name}.{column} must contain integers")
+        values = raw.map(int)
+        if values.map(lambda value: value > 2**63 - 1).any():
+            raise ExportArchiveError(f"{name}.{column} must fit in int64")
+        frame[column] = values.astype("int64")
 
     for column in _DATETIME_COLUMNS[name]:
-        if frame.empty or frame[column].isna().all():
+        if frame.empty:
             frame[column] = pd.to_datetime(frame[column], utc=True)
             continue
         try:
             frame[column] = pd.to_datetime(frame[column], errors="raise", utc=True)
         except (TypeError, ValueError) as exc:
             raise ExportArchiveError(f"{name}.{column} must contain timestamps") from exc
+        if column in _REQUIRED_DATETIME_COLUMNS[name] and frame[column].isna().any():
+            raise ExportArchiveError(f"{name}.{column} must not be blank")
 
     keys = list(_DUPLICATE_KEYS[name])
     if not frame.empty and frame.duplicated(keys).any():
@@ -184,10 +239,15 @@ def load_export_archive(path: Path) -> ExportBundle:
         raise TypeError("path must be a pathlib.Path")
     try:
         with ZipFile(path) as archive:
-            members = {entry.filename for entry in archive.infolist() if not entry.is_dir()}
+            member_names = [entry.filename for entry in archive.infolist() if not entry.is_dir()]
+            members = set(member_names)
+            if len(member_names) != len(members):
+                raise ExportArchiveError("export archive members contain duplicates")
             missing = sorted(_REQUIRED_MEMBERS - members)
             if missing:
                 raise ExportArchiveError(f"export archive is missing: {', '.join(missing)}")
+            if members != _REQUIRED_MEMBERS:
+                raise ExportArchiveError("export archive members do not match the contract")
             checksums = _verify_checksums(archive)
             posts = _read_typed_csv(archive, "latest_post_metrics.csv")
             rankings = _read_typed_csv(archive, "cumulative_top50.csv")

@@ -15,6 +15,7 @@ with st.container(horizontal=True):
     st.metric("실행", f"{health.total_runs:,}건", border=True)
     st.metric("성공", f"{health.succeeded_runs:,}건", border=True)
     st.metric("실패", f"{health.failed_runs:,}건", border=True)
+    st.metric("부분", f"{health.partial_runs:,}건", border=True)
     st.metric("격리", f"{len(bundle.quarantine):,}건", border=True)
 
 st.subheader("수집 실패")

@@ -41,6 +41,7 @@ def _write_export(
     posts: str = _POSTS,
     omit: str | None = None,
     corrupt_checksum: bool = False,
+    extra_member: bool = False,
 ) -> Path:
     members = {
         "latest_post_metrics.csv": posts,
@@ -62,6 +63,8 @@ def _write_export(
         for name, content in encoded.items():
             archive.writestr(name, content)
         archive.writestr("SHA256SUMS.txt", "".join(checksums).encode("ascii"))
+        if extra_member:
+            archive.writestr("unexpected.txt", b"not part of the export contract")
     return path
 
 
@@ -104,3 +107,38 @@ def test_load_export_archive_blanks_unapproved_source_links(tmp_path: Path) -> N
     bundle = load_export_archive(path)
 
     assert bundle.posts.iloc[0]["source_url"] == ""
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "message"),
+    [
+        (",120,4,7,abc", ",120.5,4,7,abc", "integers"),
+        (",120,4,7,abc", ",9223372036854775807.5,4,7,abc", "integers"),
+        (",120,4,7,abc", ",9223372036854775808,4,7,abc", "int64"),
+        (",120,4,7,abc", ",-1,4,7,abc", "non-negative"),
+        (",free,테스트 제목,", ",,테스트 제목,", "analysis_unit"),
+        (",free,테스트 제목,", ",free,,", "title"),
+        (
+            "테스트 제목,2026-07-17 00:00:00+09,",
+            "테스트 제목,,",
+            "published_at",
+        ),
+    ],
+)
+def test_load_export_archive_rejects_invalid_required_values(
+    tmp_path: Path, original: str, replacement: str, message: str
+) -> None:
+    path = _write_export(
+        tmp_path / "invalid-values.zip",
+        posts=_POSTS.replace(original, replacement),
+    )
+
+    with pytest.raises(ExportArchiveError, match=message):
+        load_export_archive(path)
+
+
+def test_load_export_archive_rejects_unexpected_members(tmp_path: Path) -> None:
+    path = _write_export(tmp_path / "extra.zip", extra_member=True)
+
+    with pytest.raises(ExportArchiveError, match="members"):
+        load_export_archive(path)

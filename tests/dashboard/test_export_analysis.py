@@ -137,3 +137,31 @@ def test_current_export_reports_semantic_analysis_unavailable() -> None:
 
     assert availability.available is False
     assert availability.label == "감성 분석 데이터 없음"
+
+
+def test_job_comparison_returns_a_typed_empty_projection() -> None:
+    result = job_comparison(_posts().iloc[0:0])
+
+    assert result.empty
+    assert "effective_hours" in result.columns
+    assert "fallback_reason" in result.columns
+
+
+def test_collection_health_counts_partial_runs_separately() -> None:
+    bundle = _bundle()
+    partial = bundle.runs.iloc[[0]].assign(id="three", status="partial")
+    runs = pd.concat([bundle.runs, partial], ignore_index=True)
+    bundle = ExportBundle(
+        posts=bundle.posts,
+        rankings=bundle.rankings,
+        runs=runs,
+        quarantine=bundle.quarantine,
+        checksums=bundle.checksums,
+        source_path=bundle.source_path,
+    )
+
+    health = collection_health(bundle)
+
+    assert health.failed_runs == 1
+    assert health.partial_runs == 1
+    assert len(health.failed) == 2

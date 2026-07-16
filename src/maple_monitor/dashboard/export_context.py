@@ -26,7 +26,11 @@ def require_export_bundle() -> ExportBundle:
     try:
         path = Path(path_text)
         stat = path.stat()
-        return _load_current_export(str(path), stat.st_mtime_ns, stat.st_size)
+        bundle = _load_current_export(str(path), stat.st_mtime_ns, stat.st_size)
+        if bundle.posts.empty:
+            st.warning("검증된 내보내기에 게시물 데이터가 없습니다.")
+            st.stop()
+        return bundle
     except (OSError, ExportArchiveError):
         st.error("내보내기 ZIP을 안전하게 불러오지 못했습니다. 파일과 체크섬을 확인해 주세요.")
         st.stop()

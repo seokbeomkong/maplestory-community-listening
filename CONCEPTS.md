@@ -60,6 +60,14 @@ Collected source material or observations awaiting local derived processing whil
 
 The latest source observation fully reflected in a derived result, used to distinguish a current factual layer from delayed interpretation.
 
+### Evidence Window
+
+The board-specific publication period used to select posts for a dashboard comparison; when sparse evidence widens the period, the effective window and fallback reason remain part of the result.
+
+### Semantic Availability
+
+A dashboard evidence state indicating whether an export contains the source content or labels required for topic and sentiment analysis; an unavailable state suppresses derived claims rather than inferring them from engagement counters.
+
 ### Security Quarantine
 
 An auditable isolation state for source content suspected of carrying operational instructions or unsafe payloads, preventing semantic processing until an authorized release.

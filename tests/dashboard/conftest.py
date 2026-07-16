@@ -46,3 +46,30 @@ def export_zip(tmp_path: Path) -> Path:
             archive.writestr(name, content)
         archive.writestr("SHA256SUMS.txt", manifest)
     return path
+
+
+@pytest.fixture
+def empty_export_zip(export_zip: Path, tmp_path: Path) -> Path:
+    path = tmp_path / "empty-production.zip"
+    with ZipFile(export_zip) as source:
+        members = {
+            name: source.read(name)
+            for name in (
+                "latest_post_metrics.csv",
+                "cumulative_top50.csv",
+                "collection_runs.csv",
+                "security_quarantine.csv",
+            )
+        }
+    members["latest_post_metrics.csv"] = members["latest_post_metrics.csv"].splitlines(
+        keepends=True
+    )[0]
+    manifest = "".join(
+        f"{hashlib.sha256(content).hexdigest()}  {name}\n"
+        for name, content in members.items()
+    )
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+        archive.writestr("SHA256SUMS.txt", manifest)
+    return path

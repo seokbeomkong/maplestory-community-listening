@@ -29,6 +29,7 @@ class CollectionHealth:
     total_runs: int
     succeeded_runs: int
     failed_runs: int
+    partial_runs: int
     success_rate: float
     latest_slot: pd.Timestamp | None
     failed: pd.DataFrame
@@ -144,6 +145,17 @@ def job_comparison(
 
     labels = _job_labels()
     units = sorted(set(posts["analysis_unit"]) - _NON_JOB_UNITS)
+    columns = [
+        "analysis_unit",
+        "job",
+        "sample_size",
+        "total_comments",
+        "comments_per_post",
+        "total_recommendations",
+        "recommendations_per_post",
+        "effective_hours",
+        "fallback_reason",
+    ]
     records: list[dict[str, object]] = []
     for unit in units:
         if unit.endswith("_other"):
@@ -174,7 +186,7 @@ def job_comparison(
                 "fallback_reason": selection.fallback_reason,
             }
         )
-    return pd.DataFrame.from_records(records).sort_values(
+    return pd.DataFrame.from_records(records, columns=columns).sort_values(
         ["comments_per_post", "sample_size", "job"], ascending=[False, False, True]
     ).reset_index(drop=True)
 
@@ -190,6 +202,7 @@ def collection_health(bundle: ExportBundle) -> CollectionHealth:
         total_runs=total,
         succeeded_runs=succeeded,
         failed_runs=int((runs["status"] == "failed").sum()) if total else 0,
+        partial_runs=int((runs["status"] == "partial").sum()) if total else 0,
         success_rate=succeeded / total if total else 0.0,
         latest_slot=pd.Timestamp(latest_slot) if latest_slot is not None else None,
         failed=failed,
