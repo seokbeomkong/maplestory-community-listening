@@ -25,3 +25,12 @@ def test_official_asset_manifest_references_only_nexon_sources() -> None:
     assert "maplestory.nexon.com" in manifest
     assert "lwi.nexon.com" in manifest
     assert "unsplash" not in manifest.lower()
+
+
+def test_portfolio_publishing_guide_keeps_interactivity_in_canonical_app() -> None:
+    guide = Path("docs/portfolio/publishing.md").read_text(encoding="utf-8")
+
+    assert "Streamlit" in guide
+    assert "portfolio_snapshot" in guide
+    assert "PPT/PDF" in guide
+    assert "QR" in guide
