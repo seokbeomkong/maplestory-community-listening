@@ -46,8 +46,10 @@ metric_options = {
     f"조회 {totals['views']:,}": "views",
 }
 metric_label = st.segmented_control(
-    "정렬 기준", list(metric_options), default=next(iter(metric_options)), required=True
+    "정렬 기준", list(metric_options), default=next(iter(metric_options))
 )
+if metric_label is None:
+    metric_label = next(iter(metric_options))
 metric = metric_options[metric_label]
 st.subheader(f"{labels[unit]} 주요 게시물 · {metric_label} 순")
 render_evidence_table(rank_posts(selection.rows, metric, limit=20), metric)
