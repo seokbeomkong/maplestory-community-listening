@@ -4,12 +4,15 @@ from pathlib import Path
 
 import streamlit as st
 
+from maple_monitor.dashboard.export_theme import apply_lethe_theme
+
 
 st.set_page_config(
     page_title="메이플스토리 커뮤니티 리스닝",
     page_icon=":material/analytics:",
     layout="wide",
 )
+apply_lethe_theme()
 
 pages = Path(__file__).parent / "export_pages"
 page = st.navigation(

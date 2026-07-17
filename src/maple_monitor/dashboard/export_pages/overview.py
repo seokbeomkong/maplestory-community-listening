@@ -7,6 +7,7 @@ from maple_monitor.dashboard.export_charts import job_constellation
 from maple_monitor.dashboard.export_context import require_export_bundle
 from maple_monitor.dashboard.export_pages.shared import render_source_caption
 from maple_monitor.dashboard.export_presentation import portfolio_snapshot
+from maple_monitor.dashboard.export_theme import LETHE_PROMOTION_URL, render_lethe_hero
 
 
 bundle = require_export_bundle()
@@ -14,6 +15,7 @@ snapshot = portfolio_snapshot(bundle)
 totals = snapshot["totals"]
 health = collection_health(bundle)
 
+render_lethe_hero()
 st.caption("MAPLE COMMUNITY LISTENING · DATA PORTFOLIO")
 st.header("커뮤니티의 목소리를 검증 가능한 데이터로")
 st.write(
@@ -98,3 +100,4 @@ st.info(
     "단정하지 않으며, 조회·추천·댓글은 관심의 크기이지 긍정·부정의 증거가 아닙니다.",
     icon=":material/info:",
 )
+st.markdown(f"[공식 레테 비주얼 출처 확인]({LETHE_PROMOTION_URL})")
