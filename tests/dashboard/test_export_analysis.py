@@ -110,7 +110,14 @@ def test_rank_posts_uses_one_factual_metric_and_stable_ties() -> None:
 
     ranked = rank_posts(rows, "comments", limit=3)
 
-    assert ranked.columns.tolist() == ["title", "comments", "published_at", "source_url"]
+    assert ranked.columns.tolist() == [
+        "title",
+        "comments",
+        "recommendations",
+        "views",
+        "published_at",
+        "source_url",
+    ]
     assert ranked["comments"].tolist() == [12, 10, 8]
 
 

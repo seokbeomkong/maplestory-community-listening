@@ -113,7 +113,14 @@ def rank_posts(rows: pd.DataFrame, metric: str, *, limit: int = 10) -> pd.DataFr
         raise ValueError("unsupported engagement metric")
     if limit <= 0:
         raise ValueError("limit must be positive")
-    columns = ["title", metric, "published_at", "source_url"]
+    columns = [
+        "title",
+        "comments",
+        "recommendations",
+        "views",
+        "published_at",
+        "source_url",
+    ]
     if rows.empty:
         return rows.reindex(columns=columns).copy()
     return (

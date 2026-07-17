@@ -87,3 +87,18 @@ def test_empty_export_renders_an_explicit_empty_state(
 
     assert not page.exception
     assert any("게시물 데이터가 없습니다" in item.value for item in page.warning)
+
+
+def test_job_page_shows_four_totals_and_counted_sort_options(
+    monkeypatch, export_zip: Path
+) -> None:
+    monkeypatch.setenv("MAPLE_EXPORT_PATH", str(export_zip))
+
+    page = AppTest.from_file(_PAGES / "jobs.py").run(timeout=10)
+
+    assert not page.exception
+    assert {metric.label for metric in page.metric} >= {"게시물", "댓글", "추천", "조회"}
+    rendered = str(page)
+    assert "댓글 8" in rendered
+    assert "추천 3" in rendered
+    assert "조회 500" in rendered

@@ -36,13 +36,21 @@ def render_evidence_table(rows: pd.DataFrame, metric: str) -> None:
     if rows.empty:
         st.caption("해당 기간에 표시할 게시물이 없습니다.")
         return
+    labels = dict(_METRIC_LABELS)
+    labels[metric] = f"{labels[metric]} ↓"
     st.dataframe(
         rows,
         hide_index=True,
         width="stretch",
         column_config={
             "title": st.column_config.TextColumn("제목", pinned=True),
-            metric: st.column_config.NumberColumn(_METRIC_LABELS[metric], format="%d"),
+            "comments": st.column_config.NumberColumn(
+                labels["comments"], format="%d"
+            ),
+            "recommendations": st.column_config.NumberColumn(
+                labels["recommendations"], format="%d"
+            ),
+            "views": st.column_config.NumberColumn(labels["views"], format="%d"),
             "published_at": st.column_config.DatetimeColumn("게시 시각", format="YYYY.MM.DD HH:mm"),
             "source_url": st.column_config.LinkColumn("원문", display_text="열기"),
         },
