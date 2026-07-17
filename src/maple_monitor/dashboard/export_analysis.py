@@ -125,6 +125,17 @@ def rank_posts(rows: pd.DataFrame, metric: str, *, limit: int = 10) -> pd.DataFr
     )
 
 
+def engagement_totals(rows: pd.DataFrame) -> dict[str, int]:
+    """Return separate factual engagement totals for one evidence set."""
+
+    return {
+        "posts": len(rows),
+        "comments": int(rows["comments"].sum()),
+        "recommendations": int(rows["recommendations"].sum()),
+        "views": int(rows["views"].sum()),
+    }
+
+
 def _job_labels() -> dict[str, str]:
     labels: dict[str, str] = {}
     for categories in JOB_ANALYSIS_UNITS.values():
@@ -153,6 +164,8 @@ def job_comparison(
         "comments_per_post",
         "total_recommendations",
         "recommendations_per_post",
+        "total_views",
+        "views_per_post",
         "effective_hours",
         "fallback_reason",
     ]
@@ -169,19 +182,22 @@ def job_comparison(
         )
         rows = selection.rows
         sample_size = len(rows)
-        total_comments = int(rows["comments"].sum()) if sample_size else 0
-        total_recommendations = int(rows["recommendations"].sum()) if sample_size else 0
+        totals = engagement_totals(rows)
         records.append(
             {
                 "analysis_unit": unit,
                 "job": labels.get(unit, unit),
                 "sample_size": sample_size,
-                "total_comments": total_comments,
-                "comments_per_post": total_comments / sample_size if sample_size else 0.0,
-                "total_recommendations": total_recommendations,
-                "recommendations_per_post": (
-                    total_recommendations / sample_size if sample_size else 0.0
+                "total_comments": totals["comments"],
+                "comments_per_post": (
+                    totals["comments"] / sample_size if sample_size else 0.0
                 ),
+                "total_recommendations": totals["recommendations"],
+                "recommendations_per_post": (
+                    totals["recommendations"] / sample_size if sample_size else 0.0
+                ),
+                "total_views": totals["views"],
+                "views_per_post": totals["views"] / sample_size if sample_size else 0.0,
                 "effective_hours": selection.effective_hours,
                 "fallback_reason": selection.fallback_reason,
             }

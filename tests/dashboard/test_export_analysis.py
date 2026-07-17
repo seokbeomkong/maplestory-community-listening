@@ -7,6 +7,7 @@ import pandas as pd
 
 from maple_monitor.dashboard.export_analysis import (
     collection_health,
+    engagement_totals,
     job_comparison,
     rank_posts,
     select_window,
@@ -120,7 +121,20 @@ def test_job_comparison_shows_sample_and_per_post_rates() -> None:
     assert hero["sample_size"] == 2
     assert hero["total_comments"] == 6
     assert hero["comments_per_post"] == 3.0
+    assert hero["total_views"] == 300
+    assert hero["views_per_post"] == 150.0
     assert "free" not in comparison["analysis_unit"].tolist()
+
+
+def test_engagement_totals_keep_each_counter_separate() -> None:
+    totals = engagement_totals(_posts().query("analysis_unit == 'hero'"))
+
+    assert totals == {
+        "posts": 6,
+        "comments": 42,
+        "recommendations": 21,
+        "views": 2100,
+    }
 
 
 def test_collection_health_keeps_failure_attributable() -> None:
