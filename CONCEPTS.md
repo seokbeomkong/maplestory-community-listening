@@ -98,6 +98,10 @@ A fail-closed validation that proves the effective database target remains insid
 
 A coherent, checksummed bundle of production data published from one database snapshot and treated as the indivisible source for one local download.
 
+### Portfolio Snapshot
+
+A path-neutral presentation contract derived from an Export Release that carries source identity, factual metrics, analysis status, and reusable comparison records into interactive and static portfolio formats.
+
 ### Transfer Lease
 
 A temporary ownership marker that protects an Export Release from retention while a client is downloading and validating it.

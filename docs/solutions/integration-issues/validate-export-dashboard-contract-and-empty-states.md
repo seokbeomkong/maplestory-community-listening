@@ -1,6 +1,7 @@
 ---
 title: "Validate the Export Dashboard Contract and Empty States"
 date: 2026-07-17
+last_updated: 2026-07-17
 category: integration-issues
 module: export_dashboard
 problem_type: integration_issue
@@ -10,6 +11,7 @@ symptoms:
   - "Header-only post exports caused dashboard pages to crash."
   - "Job comparisons mixed different evidence windows without disclosing the fallback."
   - "Topic pages omitted the semantic-analysis availability state."
+  - "Portfolio publication contracts leaked local paths, omitted inspectable fields, or depended on APIs newer than the declared Streamlit floor."
 root_cause: missing_validation
 resolution_type: code_fix
 severity: medium
@@ -23,6 +25,8 @@ tags:
   - "empty-state"
   - "time-window"
   - "review-regression"
+  - "portable-snapshot"
+  - "dependency-floor"
 ---
 
 # Validate the Export Dashboard Contract and Empty States
@@ -93,6 +97,13 @@ Adversarial data-contract tests and Streamlit AppTests cover fractional and over
 negative and blank fields, blank required datetimes, unexpected members, empty posts, fallback
 disclosure, and page-specific semantic notices.
 
+Portfolio publication adds a second presentation contract. Nullable controls are normalized in
+application code instead of relying on a widget option newer than the declared dependency floor.
+Published snapshots expose a stable archive filename, never a machine-local absolute path. Chart
+tooltips contract-test all comment, recommendation, and view totals and per-post rates. Official
+visual ownership is visible in rendered output, and engagement-stratified experiments retain both
+low-response controls and high-response enrichment across board, job, time, and response strata.
+
 ## Why This Works
 
 String-first parsing preserves exactly what the exporter supplied until the consumer proves that it
@@ -105,7 +116,8 @@ timestamp logic away from an evidence-free dataset. Separating effective windows
 periods from looking directly comparable, and local semantic notices keep evidence limits visible
 regardless of navigation path.
 
-The reviewed fix was verified by 418 unit and dashboard tests, clean Ruff output, and the real
+The reviewed fixes were verified by 569 tests against an isolated PostgreSQL database, 48 focused
+dashboard tests, clean Ruff output, and the real
 archive loading as 2,179 posts across 51 Analysis Units, 3,948 ranking rows, 26 collection runs, and
 four checksum-verified CSV files.
 
@@ -123,6 +135,13 @@ four checksum-verified CSV files.
   analysis.
 - Keep success, failure, and partial-run states distinct in domain projections and UI metrics.
 - Close implementation review with targeted regressions, re-review, and a fresh full verification.
+- Exercise cleared widget state and normalize nullable values using APIs available at the declared
+  minimum dependency version.
+- Keep public presentation snapshots path-neutral and assert that no source directory is serialized.
+- Contract-test every factual total/rate pair exposed by an interactive chart tooltip.
+- Verify official-asset attribution in rendered output, not only in a source manifest.
+- Preserve low-response controls when high-response observations are oversampled, and stratify by
+  source dimensions that can shift the label distribution.
 
 ## Related Issues
 
