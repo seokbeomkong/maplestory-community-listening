@@ -40,6 +40,9 @@ if comparison.empty:
     st.caption("비교할 직업 게시물이 없습니다.")
 else:
     st.altair_chart(job_constellation(comparison), width="stretch")
+    expanded_jobs = int(comparison["fallback_reason"].notna().sum())
+    if expanded_jobs:
+        st.caption(f"7일 표본 부족으로 30일 확장 · {expanded_jobs}개 직업")
     with st.expander("정확한 수치와 적용 기간 보기"):
         table = comparison.rename(
             columns={
