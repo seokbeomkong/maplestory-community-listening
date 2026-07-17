@@ -39,6 +39,7 @@ def job_constellation(comparison: pd.DataFrame) -> alt.Chart:
                     "recommendations_per_post:Q", title="게시물당 추천", format=".2f"
                 ),
                 alt.Tooltip("total_views:Q", title="총 조회", format=",d"),
+                alt.Tooltip("views_per_post:Q", title="게시물당 조회", format=".2f"),
                 alt.Tooltip("기간:N", title="분석 기간"),
             ],
         )

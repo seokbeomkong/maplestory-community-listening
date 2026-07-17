@@ -46,7 +46,7 @@ metric_options = {
     f"조회 {totals['views']:,}": "views",
 }
 metric_label = st.segmented_control(
-    "정렬 기준", list(metric_options), default=next(iter(metric_options))
+    "정렬 기준", list(metric_options), default=next(iter(metric_options)), required=True
 )
 metric = metric_options[metric_label]
 st.subheader(f"{labels[unit]} 주요 게시물 · {metric_label} 순")

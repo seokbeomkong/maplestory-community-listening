@@ -20,6 +20,8 @@ def test_portfolio_snapshot_is_json_serializable(export_zip: Path) -> None:
     }
     assert snapshot["source"]["latest_observation"].endswith("+00:00")
     assert snapshot["source"]["checksums_verified"] == 4
+    assert snapshot["source"]["archive"] == export_zip.name
+    assert str(export_zip.parent) not in str(snapshot)
     assert snapshot["collection"]["failed_runs"] == 1
     assert snapshot["jobs"][0]["job"] == "히어로"
     json.dumps(snapshot, ensure_ascii=False)

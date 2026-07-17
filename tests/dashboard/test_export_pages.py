@@ -55,6 +55,14 @@ def test_qna_page_does_not_claim_zero_comments_are_unresolved(
     assert "미해결 확정" not in str(page)
 
 
+def test_job_sort_control_is_required(monkeypatch, export_zip: Path) -> None:
+    monkeypatch.setenv("MAPLE_EXPORT_PATH", str(export_zip))
+
+    page = AppTest.from_file(_PAGES / "jobs.py").run(timeout=10)
+
+    assert page.segmented_control[0].required is True
+
+
 @pytest.mark.parametrize("page_name", ["qna.py", "tips.py"])
 def test_semantic_limits_are_visible_on_topic_pages(
     monkeypatch, export_zip: Path, page_name: str

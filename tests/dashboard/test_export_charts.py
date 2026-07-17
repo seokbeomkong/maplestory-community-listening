@@ -31,4 +31,13 @@ def test_job_constellation_encodes_volume_and_response_without_composite_score()
     assert encoding["y"]["field"] == "comments_per_post"
     assert encoding["size"]["field"] == "total_views"
     assert encoding["color"]["field"] == "recommendations_per_post"
+    tooltip_fields = {item["field"] for item in encoding["tooltip"]}
+    assert {
+        "total_comments",
+        "comments_per_post",
+        "total_recommendations",
+        "recommendations_per_post",
+        "total_views",
+        "views_per_post",
+    } <= tooltip_fields
     assert "engagement_score" not in str(spec)

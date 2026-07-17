@@ -72,4 +72,7 @@ def render_lethe_hero() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.caption("공식 비주얼: 메이플스토리 〈서약의 지배자, 레테〉 프로모션")
+    st.caption(
+        "공식 비주얼: 메이플스토리 〈서약의 지배자, 레테〉 프로모션 · "
+        "© NEXON Korea"
+    )

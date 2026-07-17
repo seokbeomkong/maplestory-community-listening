@@ -34,7 +34,7 @@ def portfolio_snapshot(bundle: ExportBundle) -> dict[str, object]:
     latest = bundle.posts["observed_at_slot_kst"].max()
     return {
         "source": {
-            "path": str(bundle.source_path),
+            "archive": bundle.source_path.name,
             "latest_observation": pd.Timestamp(latest).isoformat(),
             "checksums_verified": sum(bundle.checksums.values()),
             "checksums_total": len(bundle.checksums),

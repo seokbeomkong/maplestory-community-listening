@@ -19,6 +19,7 @@ def test_export_app_renders_portfolio_story(monkeypatch, export_zip: Path) -> No
     assert any("최신 수집" in item.value for item in page.caption)
     assert any("직업 별자리" in item.value for item in page.subheader)
     assert any("데이터 한계" in item.value for item in page.subheader)
+    assert any("© NEXON Korea" in item.value for item in page.caption)
 
 
 def test_export_app_hides_missing_path_details(monkeypatch) -> None:
