@@ -19,6 +19,7 @@ page = st.navigation(
         st.Page(pages / "free.py", title="자유게시판", icon=":material/forum:"),
         st.Page(pages / "qna.py", title="질문과 답변", icon=":material/help:"),
         st.Page(pages / "tips.py", title="팁과 노하우", icon=":material/menu_book:"),
+        st.Page(pages / "experiment.py", title="AI 실험 설계", icon=":material/science:"),
         st.Page(pages / "operations.py", title="운영 상태", icon=":material/monitor_heart:"),
     ],
     position="top",
