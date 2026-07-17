@@ -7,7 +7,11 @@ from maple_monitor.dashboard.export_charts import job_constellation
 from maple_monitor.dashboard.export_context import require_export_bundle
 from maple_monitor.dashboard.export_pages.shared import render_source_caption
 from maple_monitor.dashboard.export_presentation import portfolio_snapshot
-from maple_monitor.dashboard.export_theme import LETHE_PROMOTION_URL, render_lethe_hero
+from maple_monitor.dashboard.export_theme import (
+    LETHE_PROMOTION_URL,
+    render_lethe_hero,
+    render_pipeline_flow,
+)
 
 
 bundle = require_export_bundle()
@@ -17,12 +21,16 @@ health = collection_health(bundle)
 
 render_lethe_hero()
 st.caption("MAPLE COMMUNITY LISTENING · DATA PORTFOLIO")
-st.header("커뮤니티의 목소리를 검증 가능한 데이터로")
+st.header("실시간 유저 반응 관측")
 st.write(
-    "메이플스토리 인벤의 게시판별 성격을 구분하고, 직업 유저의 요구와 "
-    "전체 커뮤니티의 큰 이슈를 서로 다른 관점으로 읽는 분석 프로젝트입니다."
+    "메이플스토리 유저의 반응을 제품과 라이브 운영 의사결정에 활용할 수 있는 신호로 "
+    "전환하기 위해 시작했습니다. 게시판별 대화 목적을 구분하고, 관심의 크기와 감성을 "
+    "분리해 관측합니다."
 )
 render_source_caption(bundle)
+
+st.subheader("분석 워크플로우")
+render_pipeline_flow()
 
 with st.container(horizontal=True):
     st.metric("수집 게시물", f"{totals['posts']:,}건", border=True)
@@ -90,17 +98,8 @@ st.write(
     "되돌아갈 수 있게 구성했습니다. 합성 점수는 사용하지 않습니다."
 )
 
-st.subheader("다음 실험: 불만·요구·토론을 구조화하기")
+st.subheader("분석 원칙")
 st.write(
-    "현재 ZIP에는 본문과 댓글, 감성 라벨이 없습니다. 그래서 보유하지 않은 결과를 "
-    "만들지 않고, 참여도가 높은 게시물을 표본으로 삼는 라벨링·모델 평가 계획을 "
-    "별도 페이지에 공개합니다."
-)
-
-st.subheader("데이터 한계")
-st.info(
-    "현재 단계에서는 제목과 공개 반응 지표만 분석합니다. 제목만으로 감성이나 의도를 "
-    "단정하지 않으며, 조회·추천·댓글은 관심의 크기이지 긍정·부정의 증거가 아닙니다.",
-    icon=":material/info:",
+    "조회·추천·댓글은 표본 우선순위를 정하는 관심 지표로만 사용합니다. 감성은 본문과 댓글 텍스트에서 각각 추론하며, 작성자의 입장과 댓글 반응을 하나의 점수로 합치지 않습니다."
 )
 st.markdown(f"[공식 레테 비주얼 출처 확인]({LETHE_PROMOTION_URL})")

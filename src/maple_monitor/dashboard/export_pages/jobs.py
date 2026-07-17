@@ -6,12 +6,17 @@ from maple_monitor.dashboard.export_analysis import (
     engagement_totals,
     rank_posts,
     select_window,
-    semantic_availability,
 )
-from maple_monitor.dashboard.export_context import require_export_bundle
+from maple_monitor.dashboard.export_context import (
+    optional_analysis_artifact,
+    require_export_bundle,
+)
+from maple_monitor.dashboard.export_semantics import (
+    render_semantic_summary,
+    semantic_summary,
+)
 from maple_monitor.dashboard.export_pages.shared import (
     render_evidence_table,
-    render_semantic_state,
     render_source_caption,
 )
 from maple_monitor.sources import JOB_ANALYSIS_UNITS
@@ -54,5 +59,10 @@ metric = metric_options[metric_label]
 st.subheader(f"{labels[unit]} 주요 게시물 · {metric_label} 순")
 render_evidence_table(rank_posts(selection.rows, metric, limit=20), metric)
 
-st.subheader("불만·요구·토론 분석")
-render_semantic_state(semantic_availability(bundle))
+st.subheader("90일 상위 반응 표본 · 불만·요구·토론")
+artifact = optional_analysis_artifact(bundle)
+if artifact is not None and (summary := semantic_summary(artifact, unit)) is not None:
+    render_semantic_summary(
+        summary,
+        scope_label=f"{labels[unit]} 직업 카테고리 게시물만",
+    )

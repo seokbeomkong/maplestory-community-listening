@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import streamlit as st
 
-from maple_monitor.dashboard.export_analysis import rank_posts, select_window, semantic_availability
-from maple_monitor.dashboard.export_context import require_export_bundle
+from maple_monitor.dashboard.export_analysis import rank_posts, select_window
+from maple_monitor.dashboard.export_context import optional_analysis_artifact, require_export_bundle
+from maple_monitor.dashboard.export_semantics import render_semantic_summary, semantic_summary
 from maple_monitor.dashboard.export_pages.shared import (
     render_evidence_table,
-    render_semantic_state,
     render_source_caption,
 )
 
@@ -25,5 +25,7 @@ st.caption("댓글 수만 확인한 목록이며 해결 여부를 의미하지 �
 st.subheader("댓글이 많은 질문")
 render_evidence_table(rank_posts(selection.rows, "comments", limit=20), "comments")
 
-st.subheader("질문 주제·지식 공백 분석 상태")
-render_semantic_state(semantic_availability(bundle))
+artifact = optional_analysis_artifact(bundle)
+if artifact is not None and (summary := semantic_summary(artifact, "qna")) is not None:
+    st.subheader("90일 상위 반응 표본 · 반복 질문과 댓글 반응")
+    render_semantic_summary(summary, scope_label="질문과 답변 게시물만")

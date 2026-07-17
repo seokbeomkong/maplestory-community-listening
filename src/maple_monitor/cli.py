@@ -19,6 +19,8 @@ from maple_monitor.collection.service import align_kst_slot, collect_board_slot
 from maple_monitor.config import LoadedSettings, load_settings
 from maple_monitor.db import create_engine_from_env
 from maple_monitor.db import session_scope
+from maple_monitor.local.artifacts import resolve_production_export
+from maple_monitor.local.pipeline import refresh_analysis
 from maple_monitor.ops.health import database_health
 from maple_monitor.ops.scheduler import (
     collect_and_rank_with_retries,
@@ -195,3 +197,23 @@ def collector_health_command(
     typer.echo(json.dumps({"collector": "ok" if healthy else "stale"}, sort_keys=True))
     if not healthy:
         raise typer.Exit(code=1)
+
+
+@app.command("analyze-export")
+def analyze_export_command(
+    export_path: Path = typer.Option(..., "--export-path", help="Production ZIP or directory."),
+    analysis_root: Path = typer.Option(..., "--analysis-root", help="Local derived artifact root."),
+) -> None:
+    """Enrich and analyze the latest verified production export locally."""
+
+    try:
+        resolved = resolve_production_export(export_path)
+        summary = refresh_analysis(resolved, analysis_root)
+    except Exception:
+        typer.echo(json.dumps({"error": "analysis_failed"}, sort_keys=True))
+        raise typer.Exit(code=1) from None
+    typer.echo(json.dumps(asdict(summary), ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    app()

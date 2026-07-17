@@ -156,15 +156,13 @@ These are metadata exports; they contain no raw body or comment text.
 
 ### Local export dashboard
 
-The export dashboard reads one verified ZIP without connecting to production PostgreSQL. It keeps
-engagement, collection health, and unavailable semantic analysis visibly separate.
+The export dashboard reads one verified ZIP without connecting to production PostgreSQL. Local
+sidecar artifacts hold digest-matched body/comment enrichment and versioned semantic results.
 
-PowerShell:
+PowerShell (폴더를 지정하면 새 ZIP을 30초 내 자동 감지):
 
 ```powershell
-$env:MAPLE_EXPORT_PATH = (Get-ChildItem .\exports\production-*.zip |
-  Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-uv run streamlit run src/maple_monitor/dashboard/export_app.py
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local-dashboard.ps1
 ```
 
 POSIX shell:

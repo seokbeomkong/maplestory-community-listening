@@ -203,3 +203,32 @@ def test_collect_and_rank_now_prints_a_bounded_summary(
         "total_accepted": 3,
         "total_pages_fetched": 2,
     }
+
+
+def test_analyze_export_command_prints_refresh_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maple_monitor.local.pipeline import RefreshSummary
+
+    export = tmp_path / "production-20260717.zip"
+    export.write_bytes(b"fixture")
+    monkeypatch.setattr(
+        cli,
+        "refresh_analysis",
+        lambda export_path, analysis_root: RefreshSummary(4, 4, 8, 0, 0, str(analysis_root)),
+        raising=False,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "analyze-export",
+            "--export-path",
+            str(export),
+            "--analysis-root",
+            str(tmp_path / "analysis"),
+        ],
+    )
+
+    assert result.exit_code == 0, str(result.exception)
+    assert json.loads(result.stdout)["analyzed_comments"] == 8

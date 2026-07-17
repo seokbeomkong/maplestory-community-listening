@@ -10,3 +10,4 @@ __pycache__/
 .test-receipts/
 data/local/
 *.csv
+!portfolio_data/analysis/**/*.csv

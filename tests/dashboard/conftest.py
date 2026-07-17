@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+
+from maple_monitor.local.detail_client import RawDetail
+from maple_monitor.local.pipeline import refresh_analysis
 
 
 @pytest.fixture
@@ -37,8 +41,7 @@ def export_zip(tmp_path: Path) -> Path:
     }
     encoded = {name: ("\ufeff" + body).encode("utf-8") for name, body in members.items()}
     manifest = "".join(
-        f"{hashlib.sha256(content).hexdigest()}  {name}\n"
-        for name, content in encoded.items()
+        f"{hashlib.sha256(content).hexdigest()}  {name}\n" for name, content in encoded.items()
     )
     path = tmp_path / "production.zip"
     with ZipFile(path, "w", ZIP_DEFLATED) as archive:
@@ -65,11 +68,53 @@ def empty_export_zip(export_zip: Path, tmp_path: Path) -> Path:
         keepends=True
     )[0]
     manifest = "".join(
-        f"{hashlib.sha256(content).hexdigest()}  {name}\n"
-        for name, content in members.items()
+        f"{hashlib.sha256(content).hexdigest()}  {name}\n" for name, content in members.items()
     )
     with ZipFile(path, "w", ZIP_DEFLATED) as archive:
         for name, content in members.items():
             archive.writestr(name, content)
         archive.writestr("SHA256SUMS.txt", manifest)
     return path
+
+
+@pytest.fixture
+def analysis_root(export_zip: Path, tmp_path: Path) -> Path:
+    root = tmp_path / "analysis"
+
+    def fetcher(board_id: int, post_id: int) -> RawDetail:
+        article = (
+            '<html><div id="powerbbsContent">보스 스킬 구조 개선이 필요합니다</div></html>'
+        ).encode("utf-8")
+        comments = json.dumps(
+            {
+                "message": 1,
+                "cmtcount": 2,
+                "commentlist": [
+                    {
+                        "list": [
+                            {
+                                "__attr__": {
+                                    "cmtidx": post_id * 10,
+                                    "cmtpidx": post_id * 10,
+                                },
+                                "o_date": "2026-07-17 01:00:00",
+                                "o_comment": "좋아요 기대합니다",
+                            },
+                            {
+                                "__attr__": {
+                                    "cmtidx": post_id * 10 + 1,
+                                    "cmtpidx": post_id * 10,
+                                },
+                                "o_date": "2026-07-17 01:01:00",
+                                "o_comment": "아쉬운 문제도 있습니다",
+                            },
+                        ]
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return RawDetail(article=article, comments=comments)
+
+    refresh_analysis(export_zip, root, fetcher=fetcher)
+    return root

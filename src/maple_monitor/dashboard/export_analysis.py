@@ -36,10 +36,22 @@ class CollectionHealth:
 
 
 @dataclass(frozen=True)
-class SemanticAvailability:
-    available: bool
-    label: str
-    detail: str
+class SourcePeriod:
+    start: pd.Timestamp
+    end: pd.Timestamp
+
+    @property
+    def label(self) -> str:
+        start = self.start.tz_convert("Asia/Seoul").strftime("%Y.%m.%d")
+        end = self.end.tz_convert("Asia/Seoul").strftime("%Y.%m.%d")
+        return f"{start}–{end} 게시물"
+
+
+def source_period(rows: pd.DataFrame) -> SourcePeriod:
+    if rows.empty or "published_at" not in rows:
+        raise ValueError("published rows are required")
+    published = pd.to_datetime(rows["published_at"], utc=True, errors="raise")
+    return SourcePeriod(start=pd.Timestamp(published.min()), end=pd.Timestamp(published.max()))
 
 
 def _period_label(hours: int) -> str:
@@ -69,9 +81,7 @@ def _rows_since(
 ) -> pd.DataFrame:
     start = end - timedelta(hours=hours)
     mask = (posts["analysis_unit"] == analysis_unit) & (posts["published_at"] >= start)
-    return posts.loc[mask].sort_values(
-        ["published_at", "post_id"], ascending=[False, False]
-    ).copy()
+    return posts.loc[mask].sort_values(["published_at", "post_id"], ascending=[False, False]).copy()
 
 
 def select_window(
@@ -124,9 +134,7 @@ def rank_posts(rows: pd.DataFrame, metric: str, *, limit: int = 10) -> pd.DataFr
     if rows.empty:
         return rows.reindex(columns=columns).copy()
     return (
-        rows.sort_values(
-            [metric, "published_at", "post_id"], ascending=[False, False, False]
-        )
+        rows.sort_values([metric, "published_at", "post_id"], ascending=[False, False, False])
         .head(limit)[columns]
         .reset_index(drop=True)
     )
@@ -196,9 +204,7 @@ def job_comparison(
                 "job": labels.get(unit, unit),
                 "sample_size": sample_size,
                 "total_comments": totals["comments"],
-                "comments_per_post": (
-                    totals["comments"] / sample_size if sample_size else 0.0
-                ),
+                "comments_per_post": (totals["comments"] / sample_size if sample_size else 0.0),
                 "total_recommendations": totals["recommendations"],
                 "recommendations_per_post": (
                     totals["recommendations"] / sample_size if sample_size else 0.0
@@ -209,9 +215,11 @@ def job_comparison(
                 "fallback_reason": selection.fallback_reason,
             }
         )
-    return pd.DataFrame.from_records(records, columns=columns).sort_values(
-        ["comments_per_post", "sample_size", "job"], ascending=[False, False, True]
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame.from_records(records, columns=columns)
+        .sort_values(["comments_per_post", "sample_size", "job"], ascending=[False, False, True])
+        .reset_index(drop=True)
+    )
 
 
 def collection_health(bundle: ExportBundle) -> CollectionHealth:
@@ -229,12 +237,4 @@ def collection_health(bundle: ExportBundle) -> CollectionHealth:
         success_rate=succeeded / total if total else 0.0,
         latest_slot=pd.Timestamp(latest_slot) if latest_slot is not None else None,
         failed=failed,
-    )
-
-
-def semantic_availability(_bundle: ExportBundle) -> SemanticAvailability:
-    return SemanticAvailability(
-        available=False,
-        label="감성 분석 데이터 없음",
-        detail="현재 내보내기에는 본문·댓글·주제·감성 라벨이 포함되지 않습니다.",
     )

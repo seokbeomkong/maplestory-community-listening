@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from maple_monitor.dashboard.export_analysis import SemanticAvailability, WindowSelection
+from maple_monitor.dashboard.export_analysis import WindowSelection, source_period
 from maple_monitor.dashboard.export_data import ExportBundle
 
 
@@ -19,17 +19,18 @@ def format_kst(value: object) -> str:
 
 def render_source_caption(bundle: ExportBundle, selection: WindowSelection | None = None) -> None:
     latest = bundle.posts["observed_at_slot_kst"].max()
-    parts = [f"최신 수집 {format_kst(latest)}", f"게시물 {len(bundle.posts):,}건"]
+    rows = selection.rows if selection is not None else bundle.posts
+    parts = [
+        source_period(rows).label,
+        f"최신 수집 {format_kst(latest)}",
+        f"게시물 {len(bundle.posts):,}건",
+    ]
     if selection is not None:
         parts.append(f"표본 {len(selection.rows):,}건")
         parts.append(f"기간 {selection.effective_hours // 24}일")
         if selection.fallback_reason:
             parts.append(selection.fallback_reason)
     st.caption(" · ".join(parts))
-
-
-def render_semantic_state(availability: SemanticAvailability) -> None:
-    st.info(f"{availability.label} — {availability.detail}", icon=":material/info:")
 
 
 def render_evidence_table(rows: pd.DataFrame, metric: str) -> None:
@@ -44,9 +45,7 @@ def render_evidence_table(rows: pd.DataFrame, metric: str) -> None:
         width="stretch",
         column_config={
             "title": st.column_config.TextColumn("제목", pinned=True),
-            "comments": st.column_config.NumberColumn(
-                labels["comments"], format="%d"
-            ),
+            "comments": st.column_config.NumberColumn(labels["comments"], format="%d"),
             "recommendations": st.column_config.NumberColumn(
                 labels["recommendations"], format="%d"
             ),

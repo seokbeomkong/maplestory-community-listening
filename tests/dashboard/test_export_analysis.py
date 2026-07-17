@@ -11,7 +11,7 @@ from maple_monitor.dashboard.export_analysis import (
     job_comparison,
     rank_posts,
     select_window,
-    semantic_availability,
+    source_period,
 )
 from maple_monitor.dashboard.export_data import ExportBundle
 
@@ -88,9 +88,7 @@ def _bundle() -> ExportBundle:
 
 
 def test_job_window_falls_back_to_thirty_days_when_seven_days_is_sparse() -> None:
-    result = select_window(
-        _posts(), "hero", hours=168, fallback_hours=720, minimum=5
-    )
+    result = select_window(_posts(), "hero", hours=168, fallback_hours=720, minimum=5)
 
     assert result.effective_hours == 720
     assert result.fallback_reason == "7일 표본 부족"
@@ -153,13 +151,6 @@ def test_collection_health_keeps_failure_attributable() -> None:
     assert health.failed.iloc[0]["job_type"] == "metadata:warrior"
 
 
-def test_current_export_reports_semantic_analysis_unavailable() -> None:
-    availability = semantic_availability(_bundle())
-
-    assert availability.available is False
-    assert availability.label == "감성 분석 데이터 없음"
-
-
 def test_job_comparison_returns_a_typed_empty_projection() -> None:
     result = job_comparison(_posts().iloc[0:0])
 
@@ -186,3 +177,17 @@ def test_collection_health_counts_partial_runs_separately() -> None:
     assert health.failed_runs == 1
     assert health.partial_runs == 1
     assert len(health.failed) == 2
+
+
+def test_source_period_uses_actual_filtered_publication_dates() -> None:
+    rows = pd.DataFrame(
+        {
+            "published_at": pd.to_datetime(
+                ["2026-04-17T01:00:00+09:00", "2026-07-17T23:00:00+09:00"], utc=True
+            )
+        }
+    )
+
+    period = source_period(rows)
+
+    assert period.label == "2026.04.17–2026.07.17 게시물"
