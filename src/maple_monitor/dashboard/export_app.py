@@ -6,7 +6,7 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="메이플스토리 커뮤니티 현황",
+    page_title="메이플스토리 커뮤니티 리스닝",
     page_icon=":material/analytics:",
     layout="wide",
 )
@@ -14,7 +14,7 @@ st.set_page_config(
 pages = Path(__file__).parent / "export_pages"
 page = st.navigation(
     [
-        st.Page(pages / "overview.py", title="종합 현황", icon=":material/dashboard:", default=True),
+        st.Page(pages / "overview.py", title="프로젝트", icon=":material/orbit:", default=True),
         st.Page(pages / "jobs.py", title="직업 분석", icon=":material/groups:"),
         st.Page(pages / "free.py", title="자유게시판", icon=":material/forum:"),
         st.Page(pages / "qna.py", title="질문과 답변", icon=":material/help:"),
