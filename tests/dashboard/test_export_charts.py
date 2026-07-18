@@ -19,6 +19,7 @@ def test_job_constellation_encodes_volume_and_response_without_composite_score()
                 "total_recommendations": 4,
                 "views_per_post": 200.0,
                 "effective_hours": 168,
+                "analysis_period": "2026.07.10–2026.07.17",
                 "fallback_reason": None,
             }
         ]
@@ -40,4 +41,9 @@ def test_job_constellation_encodes_volume_and_response_without_composite_score()
         "total_views",
         "views_per_post",
     } <= tooltip_fields
+    tooltip_formats = {item["field"]: item.get("format") for item in encoding["tooltip"]}
+    assert tooltip_formats["comments_per_post"] == ".1f"
+    assert tooltip_formats["recommendations_per_post"] == ".1f"
+    assert tooltip_formats["views_per_post"] == ".1f"
+    assert "analysis_period" in tooltip_fields
     assert "engagement_score" not in str(spec)

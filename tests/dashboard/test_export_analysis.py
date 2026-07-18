@@ -128,6 +128,7 @@ def test_job_comparison_shows_sample_and_per_post_rates() -> None:
     assert hero["comments_per_post"] == 3.0
     assert hero["total_views"] == 300
     assert hero["views_per_post"] == 150.0
+    assert hero["analysis_period"] == "2026.07.10–2026.07.17"
     assert "free" not in comparison["analysis_unit"].tolist()
 
 
@@ -155,6 +156,7 @@ def test_job_comparison_returns_a_typed_empty_projection() -> None:
     result = job_comparison(_posts().iloc[0:0])
 
     assert result.empty
+    assert "analysis_period" in result.columns
     assert "effective_hours" in result.columns
     assert "fallback_reason" in result.columns
 

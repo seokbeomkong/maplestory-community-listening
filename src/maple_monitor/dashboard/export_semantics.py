@@ -98,7 +98,7 @@ def _render_distribution(
         )
 
 
-def _render_methodology() -> None:
+def render_classification_methodology() -> None:
     rules = load_analysis_rules()
     with st.expander(
         "분류 기준과 해석 방법",
@@ -200,7 +200,7 @@ def render_semantic_summary(
     with second_row[1].container(border=True, height="stretch"):
         _render_distribution("댓글 반응", rows["comment_reaction"], _SENTIMENT)
 
-    _render_methodology()
+    render_classification_methodology()
 
     evidence_columns = [
         "title",

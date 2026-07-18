@@ -4,6 +4,7 @@ import streamlit as st
 
 from maple_monitor.dashboard.export_context import optional_analysis_artifact, require_export_bundle
 from maple_monitor.dashboard.export_pages.shared import render_source_caption
+from maple_monitor.dashboard.export_semantics import render_classification_methodology
 from maple_monitor.dashboard.export_theme import render_pipeline_flow
 
 
@@ -40,6 +41,7 @@ st.subheader("현재 모델과 고도화 경로")
 st.write(
     "현재 운영 기준선은 한국어 게임 도메인 사전 기반 `domain-lexicon-v1`입니다. 결과마다 모델 버전, 신뢰도, 근거 표현을 저장하며 동일한 콘텐츠 해시는 다시 분석하지 않습니다. 저신뢰·혼합·반어 사례는 도구 접근이 차단된 언어모델 검토 큐로 보내고, 이중 라벨 골드셋이 확보되면 한국어 인코더를 미세조정해 시간 순 홀드아웃의 macro-F1과 보정 오차로 교체 여부를 판단합니다."
 )
+render_classification_methodology()
 
 st.subheader("텍스트 멀티모달 모델 구조")
 st.write(

@@ -62,7 +62,7 @@ else:
                 "recommendations_per_post": "게시물당 추천",
                 "total_views": "조회",
                 "views_per_post": "게시물당 조회",
-                "effective_hours": "적용 시간",
+                "analysis_period": "적용 기간",
             }
         )
         st.dataframe(
@@ -76,10 +76,15 @@ else:
                     "게시물당 추천",
                     "조회",
                     "게시물당 조회",
-                    "적용 시간",
+                    "적용 기간",
                 ]
             ],
             hide_index=True,
+            column_config={
+                "게시물당 댓글": st.column_config.NumberColumn(format="%.1f"),
+                "게시물당 추천": st.column_config.NumberColumn(format="%.1f"),
+                "게시물당 조회": st.column_config.NumberColumn(format="%.1f"),
+            },
             width="stretch",
         )
 

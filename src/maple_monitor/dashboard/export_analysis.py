@@ -41,10 +41,14 @@ class SourcePeriod:
     end: pd.Timestamp
 
     @property
-    def label(self) -> str:
+    def range_label(self) -> str:
         start = self.start.tz_convert("Asia/Seoul").strftime("%Y.%m.%d")
         end = self.end.tz_convert("Asia/Seoul").strftime("%Y.%m.%d")
-        return f"{start}–{end} 게시물"
+        return f"{start}–{end}"
+
+    @property
+    def label(self) -> str:
+        return f"{self.range_label} 게시물"
 
 
 def source_period(rows: pd.DataFrame) -> SourcePeriod:
@@ -181,6 +185,7 @@ def job_comparison(
         "recommendations_per_post",
         "total_views",
         "views_per_post",
+        "analysis_period",
         "effective_hours",
         "fallback_reason",
     ]
@@ -211,6 +216,10 @@ def job_comparison(
                 ),
                 "total_views": totals["views"],
                 "views_per_post": totals["views"] / sample_size if sample_size else 0.0,
+                "analysis_period": SourcePeriod(
+                    start=selection.start,
+                    end=selection.end,
+                ).range_label,
                 "effective_hours": selection.effective_hours,
                 "fallback_reason": selection.fallback_reason,
             }

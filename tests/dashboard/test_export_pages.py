@@ -89,6 +89,20 @@ def test_overview_discloses_job_comparison_window(monkeypatch, export_zip: Path)
     assert any("2026.07.10–2026.07.16 게시물" in item.value for item in page.caption)
 
 
+def test_overview_table_shows_date_range_and_one_decimal_per_post_rates(
+    monkeypatch, export_zip: Path
+) -> None:
+    monkeypatch.setenv("MAPLE_EXPORT_PATH", str(export_zip))
+
+    page = AppTest.from_file(_PAGES / "overview.py").run(timeout=10)
+
+    assert not page.exception
+    table = page.dataframe[0]
+    assert "적용 기간" in table.value.columns
+    assert table.value["적용 기간"].tolist() == ["2026.06.17–2026.07.17"]
+    assert table.proto.columns.count('"format": "%.1f"') == 3
+
+
 def test_empty_export_renders_an_explicit_empty_state(monkeypatch, empty_export_zip: Path) -> None:
     monkeypatch.setenv("MAPLE_EXPORT_PATH", str(empty_export_zip))
 

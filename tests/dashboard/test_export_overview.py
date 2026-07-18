@@ -32,9 +32,10 @@ def test_export_app_hides_missing_path_details(monkeypatch) -> None:
 
 
 def test_experiment_page_explains_nlp_and_multimodal_modeling(
-    monkeypatch, export_zip: Path
+    monkeypatch, export_zip: Path, analysis_root: Path
 ) -> None:
     monkeypatch.setenv("MAPLE_EXPORT_PATH", str(export_zip))
+    monkeypatch.setenv("MAPLE_ANALYSIS_ROOT", str(analysis_root))
     experiment = _APP.parent / "export_pages" / "experiment.py"
 
     page = AppTest.from_file(experiment).run(timeout=10)
@@ -44,6 +45,9 @@ def test_experiment_page_explains_nlp_and_multimodal_modeling(
     assert any("텍스트 멀티모달 모델 구조" in item.value for item in page.subheader)
     assert any("새 데이터가 들어왔을 때" in item.value for item in page.subheader)
     assert any("모델이 하지 않는 일" in item.value for item in page.subheader)
+    assert "분류 기준과 해석 방법" in str(page)
+    assert any("주제**는 제목과 본문" in item.value for item in page.markdown)
+    assert any("2026.07.10–2026.07.16 게시물" in item.value for item in page.caption)
     rendered = str(page)
     assert "MODEL DEVELOPMENT BLUEPRINT" not in rendered
     assert "NOT YET EXECUTED" not in rendered
