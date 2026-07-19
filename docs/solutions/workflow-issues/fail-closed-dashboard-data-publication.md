@@ -37,8 +37,9 @@ that Git history, rollback, or remote publication behaved correctly.
 
 Treat source identity, Git history, mutation scope, and failure phase as explicit invariants.
 
-1. Fetch the deployment branch and require the local branch name and `HEAD` to exactly equal the
-   fetched remote tip. Reject detached HEAD and merge, rebase, cherry-pick, or revert state.
+1. Fetch the deployment branch, reject detached HEAD, and require the current named branch's
+   `HEAD` to exactly equal the fetched remote tip. Also reject merge, rebase, cherry-pick, or revert
+   state. The local branch name may differ because history equality is the safety boundary.
 2. Consume the exact ZIP path returned by the downloader. Do not infer the release by rescanning
    timestamps or filenames.
 3. Bind analysis to that ZIP through a completed manifest whose `source_archive` and

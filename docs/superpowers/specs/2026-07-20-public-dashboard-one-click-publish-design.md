@@ -22,7 +22,8 @@ VPS export → 체크섬 검증 다운로드 → 증분 분석 → manifest/ZIP 
 ## 안전 조건
 
 - 기존 사용자 변경과 섞이지 않도록 시작 시 깨끗한 Git 작업 폴더를 요구한다.
-- 현재 브랜치와 원격 대상 브랜치가 같은 이름·같은 HEAD인지 fetch 후 확인한다.
+- detached HEAD를 거부하고 현재 named branch의 HEAD가 원격 대상 브랜치 HEAD와 정확히
+  같은지 fetch 후 확인한다.
 - `-PlanOnly`는 경로와 단계만 JSON으로 출력하며 네트워크와 파일 변경을 만들지 않는다.
 - manifest의 `complete`, `source_archive`, `source_sha256`을 원본 ZIP과 비교한다.
 - 커밋 대상은 `portfolio_data`로 제한한다.

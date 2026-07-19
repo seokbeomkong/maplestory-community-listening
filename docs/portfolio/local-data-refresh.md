@@ -5,9 +5,9 @@
 저장소가 깨끗한 상태에서 다음 명령 하나를 실행하면 VPS 다운로드, 증분 분석, 산출물
 검증, 공개 스냅숏 교체, Git 커밋과 `main` 브랜치 업로드까지 순서대로 처리한다.
 
-`main` 브랜치를 체크아웃한 저장소 루트에서 실행한다. 스크립트가 원격 `main`과 로컬
-`main`이 정확히 같은 시작점인지 확인하므로, 다른 브랜치의 커밋이 공개 브랜치에 섞이지
-않는다.
+저장소 루트에서 실행한다. 스크립트가 현재 로컬 HEAD와 원격 `main`이 정확히 같은
+시작점인지 확인하므로, 작업 브랜치 이름이 다르더라도 다른 커밋이 공개 브랜치에 섞이지
+않는다. detached HEAD 상태는 허용하지 않는다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-public-dashboard.ps1
@@ -23,7 +23,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-public-das
 스크립트는 다음 조건을 모두 통과한 경우에만 공개 데이터를 커밋한다.
 
 1. 시작 시 Git 작업 폴더에 기존 변경이 없다.
-2. 현재 브랜치가 `main`이고 로컬 HEAD가 최신 `origin/main`과 정확히 일치한다.
+2. named branch 상태이며 로컬 HEAD가 최신 `origin/main`과 정확히 일치한다.
 3. VPS Export Release의 체크섬 검증이 성공한다.
 4. 분석 manifest가 완료 상태이며 이번 실행에서 받은 ZIP 이름과 SHA-256이 일치한다.
 5. `manifest.json`, `semantic_posts.csv`, `semantic_comments.csv`가 모두 존재한다.

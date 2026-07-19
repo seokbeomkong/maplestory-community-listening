@@ -62,8 +62,8 @@ if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFullPath($gitRoot) -ne $repositoryRoot
 }
 
 $currentBranch = (& $gitCommand.Source -C $repositoryRoot symbolic-ref --quiet --short HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $currentBranch -ne $Branch) {
-    throw "Publishing requires the checked-out branch to be '$Branch'; detached HEAD and other branches are rejected."
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentBranch)) {
+    throw "Publishing from detached HEAD is rejected. Check out a named local branch first."
 }
 
 $gitDirectory = (& $gitCommand.Source -C $repositoryRoot rev-parse --absolute-git-dir).Trim()

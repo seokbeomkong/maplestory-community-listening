@@ -243,6 +243,19 @@ def test_publish_rejects_clean_local_history_ahead_of_remote_before_download(
     assert not export_root.exists()
 
 
+def test_named_operator_branch_at_exact_remote_tip_can_publish(tmp_path: Path) -> None:
+    repository, _remote, export_root, helpers = _write_publish_fixture(tmp_path)
+    _git(repository, "branch", "-m", "dashboard-operator")
+
+    result = _run_publish(repository, export_root, helpers)
+
+    assert result.returncode == 0, result.stderr
+    assert _git(repository, "branch", "--show-current").stdout.strip() == "dashboard-operator"
+    assert _git(repository, "rev-parse", "HEAD").stdout.strip() == _git(
+        repository, "rev-parse", "origin/main"
+    ).stdout.strip()
+
+
 def test_commit_failure_restores_the_previous_public_snapshot(tmp_path: Path) -> None:
     repository, _remote, export_root, helpers = _write_publish_fixture(tmp_path)
     hook = repository / ".git" / "hooks" / "pre-commit"

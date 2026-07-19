@@ -12,7 +12,7 @@
 
 - Do not publish an incomplete manifest or a manifest whose source name or SHA-256 differs from the ZIP.
 - Do not mix existing working-tree changes into a dashboard data commit.
-- Require local `main` to exactly match the freshly fetched `origin/main` baseline.
+- Require a named local branch whose HEAD exactly matches the freshly fetched `origin/main` baseline.
 - Publish the exact archive path returned by the downloader, never a directory rescan.
 - Do not mutate files, call the network, or invoke Git in `-PlanOnly` mode.
 - Stage only `portfolio_data`.
