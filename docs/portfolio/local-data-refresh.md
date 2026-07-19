@@ -1,5 +1,40 @@
 # 로컬 데이터 자동 갱신
 
+## 공개 대시보드 원클릭 갱신
+
+저장소가 깨끗한 상태에서 다음 명령 하나를 실행하면 VPS 다운로드, 증분 분석, 산출물
+검증, 공개 스냅숏 교체, Git 커밋과 `main` 브랜치 업로드까지 순서대로 처리한다.
+
+`main` 브랜치를 체크아웃한 저장소 루트에서 실행한다. 스크립트가 원격 `main`과 로컬
+`main`이 정확히 같은 시작점인지 확인하므로, 다른 브랜치의 커밋이 공개 브랜치에 섞이지
+않는다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-public-dashboard.ps1
+```
+
+실행 계획과 경로만 확인하고 네트워크·파일·Git 변경을 만들지 않으려면 `-PlanOnly`를
+사용한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-public-dashboard.ps1 -PlanOnly
+```
+
+스크립트는 다음 조건을 모두 통과한 경우에만 공개 데이터를 커밋한다.
+
+1. 시작 시 Git 작업 폴더에 기존 변경이 없다.
+2. 현재 브랜치가 `main`이고 로컬 HEAD가 최신 `origin/main`과 정확히 일치한다.
+3. VPS Export Release의 체크섬 검증이 성공한다.
+4. 분석 manifest가 완료 상태이며 이번 실행에서 받은 ZIP 이름과 SHA-256이 일치한다.
+5. `manifest.json`, `semantic_posts.csv`, `semantic_comments.csv`가 모두 존재한다.
+6. 분석 도중 저장소가 변경되지 않았으며 Git에는 `portfolio_data` 변경만 추가한다.
+
+커밋 전에 실패하면 공개 데이터 변경을 원래 상태로 복원한다. GitHub 전송만 실패한
+경우에는 생성된 로컬 커밋을 보존한다. 단순 네트워크 오류는 오류 메시지의 `git push`
+명령으로 전송만 재시도한다. 원격 `main`이 먼저 변경된 경우에는 새 원격 이력을 확인한
+뒤 해당 데이터 커밋을 최신 `main`에 cherry-pick하고 다시 전송한다. GitHub `main`
+업데이트 후 Streamlit Community Cloud가 같은 공개 링크를 자동으로 다시 배포한다.
+
 ## 권장 구조
 
 `MAPLE_EXPORT_PATH`를 특정 파일이 아니라 다운로드 폴더로 설정한다. 대시보드는 폴더의

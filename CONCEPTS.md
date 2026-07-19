@@ -92,6 +92,10 @@ A production Phase Gate validates the installed artifact and live boundary behav
 
 A fail-closed validation that proves the effective database target remains inside the isolated local test scope before any test, migration, subprocess, engine, or connection can acquire database capability.
 
+### Publication Baseline
+
+The freshly fetched remote commit that a local deployment branch must exactly match before a Portfolio Snapshot publication can begin, ensuring the publication commit has one known parent and contains no unpublished local history.
+
 ## Production Export
 
 ### Export Release
