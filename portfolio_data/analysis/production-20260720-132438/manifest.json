@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "complete": true,
-  "source_archive": "production-20260719-164404.zip",
-  "source_sha256": "b5ec75e3c2e27e3369054e61911a54bd818ade95a2b569ce83d1c2682e651471",
+  "source_archive": "production-20260720-132438.zip",
+  "source_sha256": "d9c86a53272850d1d7fd54c5cbccbfcdc14b8d70b00f73ec0e91254acd820769",
   "model_version": "domain-lexicon-v1.1",
   "selection_policy": {
     "version": "engagement-top-v2",
@@ -10,11 +10,11 @@
     "job_per_metric": 5,
     "general_per_metric": 20
   },
-  "generated_at_kst": "2026-07-20T02:43:25.334356+09:00",
-  "selected_posts": 736,
-  "analyzed_posts": 726,
-  "analyzed_comments": 10407,
+  "generated_at_kst": "2026-07-20T23:23:57.245310+09:00",
+  "selected_posts": 743,
+  "analyzed_posts": 734,
+  "analyzed_comments": 11101,
   "quarantined_items": 0,
-  "failed_posts": 10,
+  "failed_posts": 9,
   "refresh_policy": "6시간 수집 후 증분 분석 · 모델 재학습 월 1회 또는 드리프트 발생 시"
 }
