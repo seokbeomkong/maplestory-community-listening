@@ -2,6 +2,8 @@
 param(
     [string]$SshHost = "maple-vps",
     [string]$OutputRoot = (Join-Path (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Maplestory") "exports"),
+    [ValidateRange(1, 600)]
+    [int]$PruneTimeoutSeconds = 120,
     [switch]$PlanOnly
 )
 
@@ -16,7 +18,90 @@ $requiredCsvFiles = @(
 )
 $requiredFiles = @($requiredCsvFiles + "SHA256SUMS.txt")
 $remoteReleaseRoot = "/opt/maple-inven-monitor/exports/releases/"
+$remoteInflightRoot = "/opt/maple-inven-monitor/exports/inflight/"
+$remoteLatestLink = "/opt/maple-inven-monitor/exports/latest-download"
 $remoteHelper = "/opt/maple-inven-monitor/scripts/export-production-csv.sh"
+
+function Stop-ProcessTree {
+    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
+
+    if ($Process.HasExited) {
+        return
+    }
+    if ($env:OS -eq "Windows_NT") {
+        & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.Id /T /F 2>&1 | Out-Null
+    } else {
+        $Process.Kill()
+    }
+    $Process.WaitForExit()
+}
+
+function Invoke-ApplicationWithTimeout {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $captureRoot = Join-Path ([IO.Path]::GetTempPath()) ("maple-command-" + [Guid]::NewGuid().ToString("N"))
+    $stdoutPath = "$captureRoot.stdout"
+    $stderrPath = "$captureRoot.stderr"
+    $process = $null
+    try {
+        $launchPath = $FilePath
+        $launchArguments = $Arguments
+        if ([IO.Path]::GetExtension($FilePath) -in @(".cmd", ".bat")) {
+            $launchPath = "$env:SystemRoot\System32\cmd.exe"
+            $launchArguments = @("/d", "/c", $FilePath) + $Arguments
+        }
+
+        $process = Start-Process `
+            -FilePath $launchPath `
+            -ArgumentList $launchArguments `
+            -NoNewWindow `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+        # Windows PowerShell 5.1 can lose ExitCode for fast processes unless the handle is retained.
+        $null = $process.Handle
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            Stop-ProcessTree -Process $process
+        } else {
+            # Flush redirected output before reading the capture files.
+            $process.WaitForExit()
+            $process.Refresh()
+        }
+
+        $exitCode = if ($completed) { [int]$process.ExitCode } else { $null }
+
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            [IO.File]::ReadAllText($stdoutPath)
+        } else {
+            ""
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            [IO.File]::ReadAllText($stderrPath)
+        } else {
+            ""
+        }
+        [PSCustomObject]@{
+            TimedOut = -not $completed
+            ExitCode = $exitCode
+            Stdout = $stdout
+            Stderr = $stderr
+        }
+    } finally {
+        foreach ($capturePath in @($stdoutPath, $stderrPath)) {
+            if (Test-Path -LiteralPath $capturePath) {
+                Remove-Item -LiteralPath $capturePath -Force
+            }
+        }
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
 
 if (
     [string]::IsNullOrWhiteSpace($SshHost) -or
@@ -155,6 +240,7 @@ try {
     }
 
     $pruneArguments = @(
+        "-n",
         "-o", "BatchMode=yes",
         "-o", "NumberOfPasswordPrompts=0",
         "-o", "ConnectTimeout=15",
@@ -164,13 +250,45 @@ try {
         "--prune",
         $remoteReleasePath
     )
-    $pruneOutput = @(& $sshCommand.Source @pruneArguments)
-    if ($LASTEXITCODE -ne 0) {
-        throw "The remote release pruning failed with exit code $LASTEXITCODE."
+    $pruneResult = Invoke-ApplicationWithTimeout `
+        -FilePath $sshCommand.Source `
+        -Arguments $pruneArguments `
+        -TimeoutSeconds $PruneTimeoutSeconds
+    Write-Verbose "Prune SSH result: timed_out=$($pruneResult.TimedOut); exit_code=$($pruneResult.ExitCode)"
+    if ($pruneResult.TimedOut) {
+        $remoteReleaseName = [IO.Path]::GetFileName($remoteReleasePath)
+        $remoteInflightPath = "$remoteInflightRoot$remoteReleaseName"
+        $verificationArguments = @(
+            "-n",
+            "-o", "BatchMode=yes",
+            "-o", "NumberOfPasswordPrompts=0",
+            "-o", "ConnectTimeout=15",
+            "--",
+            $SshHost,
+            "test", "-d", $remoteReleasePath,
+            "-a", "!", "-e", $remoteInflightPath,
+            "-a", $remoteReleasePath, "-ef", $remoteLatestLink
+        )
+        $verificationResult = Invoke-ApplicationWithTimeout `
+            -FilePath $sshCommand.Source `
+            -Arguments $verificationArguments `
+            -TimeoutSeconds ([Math]::Min($PruneTimeoutSeconds, 30))
+        if ($verificationResult.TimedOut) {
+            throw "The remote prune SSH session timed out, and completion verification also timed out."
+        }
+        if ($verificationResult.ExitCode -ne 0) {
+            throw "The remote prune SSH session timed out before the completed release state could be verified (exit code $($verificationResult.ExitCode)). $($verificationResult.Stderr.Trim())"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($verificationResult.Stdout)) {
+            throw "The remote prune completion verification returned unexpected output."
+        }
+        Write-Verbose "The prune SSH session did not close, but the completed remote release state was verified. Continuing safely."
+    } elseif ($pruneResult.ExitCode -ne 0) {
+        throw "The remote release pruning failed with exit code $($pruneResult.ExitCode). $($pruneResult.Stderr.Trim())"
     }
     $unexpectedPruneOutput = @(
-        $pruneOutput |
-            ForEach-Object { ([string]$_).Trim() } |
+        $pruneResult.Stdout -split "`r?`n" |
+            ForEach-Object { $_.Trim() } |
             Where-Object { $_.Length -gt 0 }
     )
     if ($unexpectedPruneOutput.Count -ne 0) {

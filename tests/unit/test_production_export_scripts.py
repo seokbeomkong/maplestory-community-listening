@@ -134,9 +134,11 @@ def _fake_ssh_environment(
         "import os\n"
         "import shutil\n"
         "import sys\n"
+        "import time\n"
         "args = sys.argv[1:]\n"
         "Path(os.environ['FAKE_SSH_MARKER']).write_text('called', encoding='ascii')\n"
-        "event = 'prune' if '--prune' in args else 'export'\n"
+        "event = ('prune' if '--prune' in args else "
+        "'verify' if any('latest-download' in arg for arg in args) else 'export')\n"
         "with Path(os.environ['FAKE_EVENT_LOG']).open('a', encoding='ascii') as stream:\n"
         "    stream.write(event + '\\n')\n"
         "if event == 'prune':\n"
@@ -150,7 +152,10 @@ def _fake_ssh_environment(
         "        releases = sorted((item for item in Path(retention_root).iterdir() if item.is_dir()), reverse=True)\n"
         "        for expired in releases[3:]:\n"
         "            shutil.rmtree(expired)\n"
+        "    time.sleep(float(os.environ.get('FAKE_PRUNE_HANG_SECONDS', '0')))\n"
         "    raise SystemExit(int(os.environ.get('FAKE_PRUNE_EXIT', '0')))\n"
+        "if event == 'verify':\n"
+        "    raise SystemExit(int(os.environ.get('FAKE_VERIFY_EXIT', '0')))\n"
         "print(os.environ['FAKE_REMOTE_PATH'])\n",
         encoding="utf-8",
     )
@@ -487,6 +492,31 @@ def test_prune_failure_after_archive_preparation_publishes_nothing(tmp_path: Pat
     events = Path(environment["FAKE_EVENT_LOG"]).read_text(encoding="ascii").splitlines()
     assert events == ["export", "scp", "prune"]
     assert list(output_root.glob("production-*")) == []
+    assert _partial_directories(output_root) == []
+    assert list(output_root.glob("*.partial.zip")) == []
+
+
+def test_completed_remote_prune_with_hung_ssh_is_verified_and_published(tmp_path: Path) -> None:
+    release = _write_release(tmp_path)
+    environment, _ssh_marker, _scp_marker = _fake_ssh_environment(tmp_path, release)
+    output_root = tmp_path / "exports"
+    environment["FAKE_PRUNE_HANG_SECONDS"] = "5"
+
+    result = _run_powershell(
+        "-OutputRoot",
+        str(output_root),
+        "-PruneTimeoutSeconds",
+        "1",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    output_lines = result.stdout.splitlines()
+    assert len(output_lines) == 2
+    assert Path(output_lines[0]).is_dir()
+    assert Path(output_lines[1]).is_file()
+    events = Path(environment["FAKE_EVENT_LOG"]).read_text(encoding="ascii").splitlines()
+    assert events == ["export", "scp", "prune", "verify"]
     assert _partial_directories(output_root) == []
     assert list(output_root.glob("*.partial.zip")) == []
 
